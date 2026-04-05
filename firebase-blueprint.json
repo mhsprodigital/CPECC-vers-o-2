@@ -1,0 +1,160 @@
+{
+  "entities": {
+    "ResearcherProfile": {
+      "title": "Researcher Profile",
+      "description": "Profile data for a researcher",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User ID" },
+        "status": { "type": "string", "enum": ["Pendente", "Ativo", "Inativo"] },
+        "nome": { "type": "string" },
+        "cpf": { "type": "string" },
+        "nascimento": { "type": "string" },
+        "nome_mae": { "type": "string" },
+        "nome_pai": { "type": "string" },
+        "naturalidade": { "type": "string" },
+        "nacionalidade": { "type": "string" },
+        "passaporte": { "type": "string" },
+        "inss": { "type": "string" },
+        "pis": { "type": "string" },
+        "email_inst": { "type": "string", "format": "email" },
+        "email_pess": { "type": "string", "format": "email" },
+        "telefone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "cep": { "type": "string" },
+        "logradouro": { "type": "string" },
+        "complemento": { "type": "string" },
+        "cidade": { "type": "string" },
+        "uf": { "type": "string" },
+        "vinculo": { "type": "string" },
+        "matricula": { "type": "string" },
+        "carga_horaria": { "type": "number" },
+        "regional": { "type": "string" },
+        "tipo_unidade": { "type": "string" },
+        "lotacao": { "type": "string" },
+        "setor": { "type": "string" },
+        "cep_inst": { "type": "string" },
+        "end_inst": { "type": "string" },
+        "sei": { "type": "string" },
+        "graduacao": { "type": "string" },
+        "titulacao": { "type": "string" },
+        "area": { "type": "string" },
+        "lattes": { "type": "string" },
+        "orcid": { "type": "string" },
+        "orcid_link": { "type": "string" },
+        "historico_json": { "type": "string" },
+        "banco": { "type": "string" },
+        "agencia": { "type": "string" },
+        "tipo_conta": { "type": "string" },
+        "conta": { "type": "string" },
+        "genero": { "type": "string" },
+        "raca": { "type": "string" },
+        "ensino_medio": { "type": "string" },
+        "beneficiario": { "type": "string" },
+        "pcd": { "type": "string" },
+        "pcd_detalhe": { "type": "string" },
+        "atuacao": { "type": "string" },
+        "detalhes_atuacao": { "type": "string" },
+        "grupo_cnpq": { "type": "string" },
+        "documentos_json": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "nome", "cpf", "email_inst"]
+    },
+    "ResearcherPublicProfile": {
+      "title": "Researcher Public Profile",
+      "description": "Public profile data for team search",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "cpf": { "type": "string" },
+        "titulacao": { "type": "string" },
+        "lattes": { "type": "string" }
+      },
+      "required": ["nome", "cpf"]
+    },
+    "FomentoPesquisa": {
+      "title": "Fomento à Pesquisa",
+      "description": "Research funding project submission",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string" },
+        "titulo": { "type": "string" },
+        "resumo": { "type": "string" },
+        "metodologia": { "type": "string" },
+        "cronograma_json": { "type": "string" },
+        "orcamento_json": { "type": "string" },
+        "equipe_json": { "type": "string" },
+        "anexos_json": { "type": "string" },
+        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "titulo", "status"]
+    },
+    "FomentoPublicacao": {
+      "title": "Fomento para Publicação",
+      "description": "Publication funding project submission",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string" },
+        "titulo": { "type": "string" },
+        "revista": { "type": "string" },
+        "qualis": { "type": "string" },
+        "valor_apc": { "type": "number" },
+        "moeda": { "type": "string" },
+        "resumo": { "type": "string" },
+        "carta_aceite_url": { "type": "string" },
+        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "titulo", "status"]
+    },
+    "PICITE": {
+      "title": "PICITE",
+      "description": "Scientific initiation project submission",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string" },
+        "titulo_projeto": { "type": "string" },
+        "nome_estudante": { "type": "string" },
+        "cpf_estudante": { "type": "string" },
+        "email_estudante": { "type": "string" },
+        "curso": { "type": "string" },
+        "natureza_vinculo": { "type": "string" },
+        "plano_trabalho_url": { "type": "string" },
+        "banco_estudante": { "type": "string" },
+        "agencia_estudante": { "type": "string" },
+        "conta_estudante": { "type": "string" },
+        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "titulo_projeto", "status"]
+    }
+  },
+  "firestore": {
+    "/researchers/{userId}": {
+      "schema": { "$ref": "#/entities/ResearcherProfile" },
+      "description": "Profiles of researchers"
+    },
+    "/researchers_public/{userId}": {
+      "schema": { "$ref": "#/entities/ResearcherPublicProfile" },
+      "description": "Public profiles of researchers for team search"
+    },
+    "/fomento_pesquisa/{projectId}": {
+      "schema": { "$ref": "#/entities/FomentoPesquisa" },
+      "description": "Research funding projects"
+    },
+    "/fomento_publicacao/{projectId}": {
+      "schema": { "$ref": "#/entities/FomentoPublicacao" },
+      "description": "Publication funding projects"
+    },
+    "/picite/{projectId}": {
+      "schema": { "$ref": "#/entities/PICITE" },
+      "description": "Scientific initiation projects"
+    }
+  }
+}
