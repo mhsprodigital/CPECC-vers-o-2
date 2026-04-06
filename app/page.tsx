@@ -6,7 +6,8 @@ import Login from '@/components/login';
 import Onboarding from '@/components/onboarding';
 import Dashboard from '@/components/dashboard';
 import AdminDashboard from '@/components/admin-dashboard';
-import { getOneFromLocal, seedMockData } from '@/lib/local-storage';
+import { seedMockData } from '@/lib/local-storage';
+import { supabase } from '@/lib/supabase';
 
 export default function Home() {
   const { user, adminUser, loading } = useAuth();
@@ -19,8 +20,16 @@ export default function Home() {
     const checkProfile = async () => {
       if (user) {
         try {
-          const profile = getOneFromLocal('researchers', user.uid);
-          setHasProfile(!!profile);
+          const { data, error } = await supabase
+            .from('researchers')
+            .select('id')
+            .eq('id', user.id)
+            .single();
+            
+          if (error && error.code !== 'PGRST116') {
+            console.error('Error fetching profile:', error);
+          }
+          setHasProfile(!!data);
         } catch (error) {
           console.error('Error checking profile:', error);
           setHasProfile(false);

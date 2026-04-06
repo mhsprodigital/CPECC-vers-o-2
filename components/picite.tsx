@@ -1,14 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { ArrowLeft, Check, Upload } from 'lucide-react';
-import { saveToLocal, mockUploadFile } from '@/lib/local-storage';
+import { saveToLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
+import { supabase } from '@/lib/supabase';
+import { uploadToGoogleDrive } from '@/lib/google-drive';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 export default function Picite({ onBack }: { onBack: () => void }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (user) {
+        const { data } = await supabase.from('researchers').select('*').eq('id', user.id).single();
+        if (data) setUserProfile(data);
+      }
+    };
+    fetchProfile();
+  }, [user]);
   
   const [formData, setFormData] = useState({
     titulo_projeto: '',
@@ -41,40 +57,57 @@ export default function Picite({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !userProfile) return;
     setLoading(true);
 
     try {
       let plano_trabalho_url = '';
       if (file) {
-        plano_trabalho_url = await mockUploadFile(file);
+        plano_trabalho_url = await uploadToGoogleDrive(file, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
       }
 
-      const projectData = {
+      const rawData = {
         ...formData,
-        authorUid: user.uid,
         plano_trabalho_url,
-        status: 'Em Análise',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      saveToLocal('picite', projectData);
-      
-      alert('Projeto PICITE submetido com sucesso!');
-      onBack();
+      const { error } = await supabase
+        .from('projects')
+        .insert({
+          author_id: user.id,
+          type: 'picite',
+          status: 'Em Análise',
+          raw_data: rawData
+        });
+
+      if (error) throw error;
+
+      showToast('Projeto PICITE submetido com sucesso!', 'success');
+      setTimeout(() => {
+        onBack();
+      }, 1500);
     } catch (error) {
       console.error('Error submitting PICITE:', error);
-      alert('Erro ao submeter o projeto. Tente novamente.');
+      showToast('Erro ao submeter o projeto. Tente novamente.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-4">
+    <div className="animate-in fade-in slide-in-from-bottom-4 relative pb-24">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
+          {toastMessage.message}
+        </div>
+      )}
       <header className="mb-12">
         <button onClick={onBack} className="flex items-center gap-2 text-primary font-bold text-sm mb-6 hover:underline">
           <ArrowLeft className="w-4 h-4" /> Voltar ao Dashboard

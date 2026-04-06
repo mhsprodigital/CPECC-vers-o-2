@@ -1,14 +1,15 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { auth } from './firebase';
+import { User } from '@supabase/supabase-js';
+import { supabase } from './supabase';
 
 interface AuthContextType {
   user: User | null;
   adminUser: any | null;
   loading: boolean;
-  signInWithGoogle: () => Promise<void>;
+  signInWithPassword: (email: string, pass: string) => Promise<boolean>;
+  signUp: (email: string, pass: string) => Promise<boolean>;
   logout: () => Promise<void>;
   loginAdmin: (username: string, pass: string) => boolean;
 }
@@ -17,7 +18,8 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   adminUser: null,
   loading: true,
-  signInWithGoogle: async () => {},
+  signInWithPassword: async () => false,
+  signUp: async () => false,
   logout: async () => {},
   loginAdmin: () => false,
 });
@@ -38,45 +40,52 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
     
-    // Check local storage for mock Google session
-    const checkMockGoogleSession = () => {
-      const storedUser = localStorage.getItem('mockGoogleSession');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
-      }
-    };
-    
     checkAdminSession();
-    checkMockGoogleSession();
 
-    try {
-      const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-        if (firebaseUser) {
-          setUser(firebaseUser);
-        }
+    // Supabase Auth Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
         setLoading(false);
-      });
-      return () => unsubscribe();
-    } catch (error) {
-      console.warn('Firebase auth not configured properly, using mock auth.', error);
+      }
+    );
+
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
       setLoading(false);
-    }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithPassword = async (email: string, pass: string) => {
     try {
-      // Mock Google Login since Firebase is not configured
-      const mockUser = {
-        uid: 'mock-google-uid-123',
-        email: 'pesquisador@example.com',
-        displayName: 'Pesquisador Teste',
-        photoURL: 'https://picsum.photos/seed/pesquisador/200/200',
-      } as User;
-      
-      setUser(mockUser);
-      localStorage.setItem('mockGoogleSession', JSON.stringify(mockUser));
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pass,
+      });
+      if (error) throw error;
+      return true;
     } catch (error) {
-      console.error('Error signing in with Google', error);
+      console.error('Error signing in with Password', error);
+      return false;
+    }
+  };
+
+  const signUp = async (email: string, pass: string) => {
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+      });
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error signing up', error);
+      return false;
     }
   };
 
@@ -98,20 +107,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         localStorage.removeItem('adminSession');
       }
       
-      const storedUser = localStorage.getItem('mockGoogleSession');
-      if (storedUser) {
-        setUser(null);
-        localStorage.removeItem('mockGoogleSession');
-      }
-
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch (error) {
       console.error('Error signing out', error);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ user, adminUser, loading, signInWithGoogle, logout, loginAdmin }}>
+    <AuthContext.Provider value={{ user, adminUser, loading, signInWithPassword, signUp, logout, loginAdmin }}>
       {children}
     </AuthContext.Provider>
   );

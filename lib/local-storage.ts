@@ -39,10 +39,14 @@ export const removeFromLocal = (collectionName: string, id: string) => {
 };
 
 export const mockUploadFile = async (file: File): Promise<string> => {
-  // Simulate upload delay
-  await new Promise(resolve => setTimeout(resolve, 800));
-  // Return a fake URL
-  return `https://mock-storage.local/${encodeURIComponent(file.name)}`;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      resolve(reader.result as string);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 };
 
 // Seed mock data for testing

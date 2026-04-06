@@ -1,22 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowLeft, FileText, Plus, TrendingUp, Landmark, CheckCircle2, AlertCircle, Eye, Download, Edit2, AlertTriangle, X, MessageSquare, Check, Upload } from 'lucide-react';
+import { ArrowLeft, FileText, Plus, TrendingUp, Landmark, CheckCircle2, AlertCircle, Eye, Download, Edit2, AlertTriangle, X, MessageSquare, Check, Upload, Clock } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 export default function DossieProjeto({ project, onBack }: { project?: any, onBack: () => void }) {
-  const data = project || {
-    id: '#PESQ-2024-001',
-    titulo: 'Estudo Clínico sobre Novos Biomarcadores',
-    status: 'Aprovado',
-    createdAt: new Date().toISOString(),
-    orcamento_total: 200000,
-  };
+  const data = project || {};
+  const rawData = data.raw_data || {};
 
-  const [despesas, setDespesas] = useState([
-    { id: '#4401', descricao: 'Microscópio Óptico Nikon', categoria: 'Equipamentos Laboratoriais', data: '12/03/2024', valor: 15400.00, status: 'Aprovado', mensagem: 'Comprovação validada com sucesso.' },
-    { id: '#4388', descricao: 'Passagem Aérea - BSB/SP', categoria: 'Viagens e Diárias', data: '08/03/2024', valor: 1250.40, status: 'Em Análise', mensagem: 'Aguardando verificação do bilhete de embarque.' },
-    { id: '#4375', descricao: 'Reagentes Químicos Mod. 2', categoria: 'Material de Consumo', data: '25/02/2024', valor: 4800.00, status: 'Pendente', mensagem: 'Nota fiscal ilegível. Por favor, reenvie o documento com o CNPJ da FEPECS visível.' },
-  ]);
+  const [despesas, setDespesas] = useState<any[]>(rawData.despesas || []);
+  const [relatorios, setRelatorios] = useState<any[]>(rawData.relatorios || []);
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -29,12 +22,43 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
     valor: '',
   });
 
-  const totalExecutado = despesas.reduce((acc, curr) => acc + curr.valor, 0);
-  const orcamentoTotal = data.orcamento_total || 200000;
-  const saldoRemanescente = orcamentoTotal - totalExecutado;
-  const percentualExecutado = (totalExecutado / orcamentoTotal) * 100;
+  const [newReport, setNewReport] = useState({
+    tipo: 'Parcial 01',
+    data: '',
+    resumo: '',
+  });
 
-  const handleAddExpense = (e: React.FormEvent) => {
+  const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
+  const [extensionRequest, setExtensionRequest] = useState({
+    assunto: 'Solicitação de Prorrogação de Prazo',
+    motivo: ''
+  });
+
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const totalExecutado = despesas.reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0);
+  
+  let orcamentoTotal = data.orcamento_total || 0;
+  if (rawData.orcamento_json) {
+    try {
+      const orcamentoParsed = JSON.parse(rawData.orcamento_json);
+      orcamentoTotal = orcamentoParsed.reduce((acc: number, item: any) => acc + (Number(item.qtd) * Number(item.valor)), 0);
+    } catch (e) {
+      console.error("Error parsing orcamento_json", e);
+    }
+  } else if (rawData.orcamento) {
+    orcamentoTotal = rawData.orcamento.reduce((acc: number, item: any) => acc + (Number(item.qtd) * Number(item.valor)), 0);
+  }
+
+  const saldoRemanescente = orcamentoTotal - totalExecutado;
+  const percentualExecutado = orcamentoTotal > 0 ? (totalExecutado / orcamentoTotal) * 100 : 0;
+
+  const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     const expense = {
       id: `#${Math.floor(1000 + Math.random() * 9000)}`,
@@ -45,17 +69,159 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
       status: 'Em Análise',
       mensagem: 'Comprovação enviada para análise técnica.',
     };
-    setDespesas([expense, ...despesas]);
+    
+    const updatedDespesas = [expense, ...despesas];
+    setDespesas(updatedDespesas);
+    
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({
+          raw_data: {
+            ...rawData,
+            despesas: updatedDespesas
+          }
+        })
+        .eq('id', data.id);
+        
+      if (error) throw error;
+      showToast('Prestação de contas enviada com sucesso.', 'success');
+    } catch (error) {
+      console.error('Error saving expense:', error);
+      showToast('Erro ao salvar prestação de contas.', 'error');
+    }
+
     setIsExpenseModalOpen(false);
     setNewExpense({ descricao: '', categoria: 'Material de Consumo', data: '', valor: '' });
   };
 
+  const handleAddReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const report = {
+      tipo: newReport.tipo,
+      data: new Date().toLocaleDateString('pt-BR'),
+      status: 'Em Análise',
+    };
+
+    const updatedRelatorios = [report, ...relatorios];
+    setRelatorios(updatedRelatorios);
+
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({
+          raw_data: {
+            ...rawData,
+            relatorios: updatedRelatorios
+          }
+        })
+        .eq('id', data.id);
+        
+      if (error) throw error;
+      showToast('Relatório enviado com sucesso.', 'success');
+    } catch (error) {
+      console.error('Error saving report:', error);
+      showToast('Erro ao salvar relatório.', 'error');
+    }
+
+    setIsReportModalOpen(false);
+    setNewReport({ tipo: 'Parcial 01', data: '', resumo: '' });
+  };
+
+  const handleRequestExtension = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({
+          raw_data: {
+            ...rawData,
+            prorrogacao_solicitada: {
+              ...extensionRequest,
+              data: new Date().toISOString(),
+              status: 'Pendente'
+            }
+          }
+        })
+        .eq('id', data.id);
+        
+      if (error) throw error;
+      showToast('Solicitação de prorrogação enviada com sucesso.', 'success');
+      setIsExtensionModalOpen(false);
+      // Update local state to reflect the change
+      rawData.prorrogacao_solicitada = {
+        ...extensionRequest,
+        data: new Date().toISOString(),
+        status: 'Pendente'
+      };
+    } catch (error) {
+      console.error('Error requesting extension:', error);
+      showToast('Erro ao solicitar prorrogação.', 'error');
+    }
+  };
+
+  // Calculate deadlines based on TOA date or creation date
+  const baseDate = new Date(rawData.data_toa || data.createdAt || new Date());
+  
+  // Base reports
+  const timelineReports = [
+    { id: 'Parcial 01', title: 'Relatório Parcial 01', period: '0-6 Meses', months: 6 },
+    { id: 'Parcial 02', title: 'Relatório Parcial 02', period: '6-12 Meses', months: 12 },
+    { id: 'Parcial 03', title: 'Relatório Parcial 03', period: '12-18 Meses', months: 18 },
+  ];
+
+  if (rawData.prorrogacao_aprovada) {
+    timelineReports.push({ id: 'Parcial 04', title: 'Relatório Parcial 04', period: '18-24 Meses', months: 24 });
+    timelineReports.push({ id: 'Parcial 05', title: 'Relatório Parcial 05', period: '24-30 Meses', months: 30 });
+    timelineReports.push({ id: 'Final', title: 'Relatório Final', period: 'Conclusão', months: 36 });
+  } else {
+    timelineReports.push({ id: 'Final', title: 'Relatório Final', period: 'Conclusão', months: 24 });
+  }
+
+  const reportsWithDates = timelineReports.map(report => {
+    const dueDate = new Date(baseDate);
+    dueDate.setMonth(dueDate.getMonth() + report.months);
+    return {
+      ...report,
+      date: dueDate.toLocaleDateString('pt-BR'),
+      dueDateObj: dueDate
+    };
+  });
+
+  // Find next pending report for alerts
+  const nextPendingReport = reportsWithDates.find(r => !relatorios.find(rel => rel.tipo === r.id));
+  let daysUntilNextReport = null;
+  if (nextPendingReport) {
+    const diffTime = nextPendingReport.dueDateObj.getTime() - new Date().getTime();
+    daysUntilNextReport = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-4 pb-12">
+    <div className="animate-in fade-in slide-in-from-bottom-4 pb-12 relative">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+          {toastMessage.message}
+        </div>
+      )}
       <header className="mb-8">
         <button onClick={onBack} className="flex items-center gap-2 text-primary font-bold text-sm mb-6 hover:underline">
           <ArrowLeft className="w-4 h-4" /> Voltar ao Dashboard
         </button>
+        
+        {daysUntilNextReport !== null && daysUntilNextReport <= 30 && (
+          <div className={`mb-6 p-4 rounded-xl flex items-start gap-3 border-l-4 ${daysUntilNextReport < 0 ? 'bg-red-50 border-red-500 text-red-800' : 'bg-yellow-50 border-yellow-500 text-yellow-800'}`}>
+            <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${daysUntilNextReport < 0 ? 'text-red-500' : 'text-yellow-500'}`} />
+            <div>
+              <h4 className="font-bold">Atenção aos Prazos!</h4>
+              <p className="text-sm mt-1">
+                {daysUntilNextReport < 0 
+                  ? `O ${nextPendingReport?.title} está atrasado há ${Math.abs(daysUntilNextReport)} dias (Vencimento: ${nextPendingReport?.date}).`
+                  : `O ${nextPendingReport?.title} vence em ${daysUntilNextReport} dias (Vencimento: ${nextPendingReport?.date}).`}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -137,50 +303,72 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-xl font-bold text-on-surface">Cronograma Técnico-Científico</h2>
-            <p className="text-sm text-on-surface-variant">Ciclo semestral de submissão de resultados</p>
+            <p className="text-sm text-on-surface-variant">Ciclo semestral de submissão de resultados a partir do TOA ({baseDate.toLocaleDateString('pt-BR')})</p>
+          </div>
+          <div>
+            {rawData.prorrogacao_aprovada ? (
+              <span className="bg-green-100 text-green-800 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4" /> Prorrogação Aprovada (+1 Ano)
+              </span>
+            ) : rawData.prorrogacao_solicitada ? (
+              <span className="bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1">
+                <Clock className="w-4 h-4" /> Prorrogação em Análise
+              </span>
+            ) : (
+              <button onClick={() => setIsExtensionModalOpen(true)} className="text-sm font-bold text-primary hover:underline flex items-center gap-1">
+                <Clock className="w-4 h-4" /> Solicitar Prorrogação
+              </button>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bento-card border-2 border-secondary relative overflow-hidden">
-            <div className="flex justify-between items-start mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">0-6 Meses</span>
-              <div className="w-5 h-5 rounded-full bg-secondary text-white flex items-center justify-center">
-                <CheckCircle2 className="w-3 h-3" />
+          {reportsWithDates.map((reportDef, index) => {
+            const report = relatorios.find(r => r.tipo === reportDef.id);
+            const isNext = !report && (index === 0 || relatorios.find(r => r.tipo === reportsWithDates[index - 1].id));
+            
+            if (report) {
+              return (
+                <div key={reportDef.id} className="bento-card border-2 border-secondary relative overflow-hidden">
+                  <div className="flex justify-between items-start mb-4">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">{reportDef.period}</span>
+                    <div className="w-5 h-5 rounded-full bg-secondary text-white flex items-center justify-center">
+                      <CheckCircle2 className="w-3 h-3" />
+                    </div>
+                  </div>
+                  <h4 className="font-bold text-on-surface mb-1">{reportDef.title}</h4>
+                  <p className="text-xs text-on-surface-variant mb-4">Entregue em {report.data}</p>
+                  <span className="bg-teal-100 text-teal-800 text-[10px] font-bold uppercase px-2 py-1 rounded">Entregue</span>
+                </div>
+              );
+            }
+            
+            if (isNext) {
+              return (
+                <div key={reportDef.id} className="bento-card border-2 border-primary relative overflow-hidden shadow-md">
+                  <div className="flex justify-between items-start mb-4">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-primary">{reportDef.period}</span>
+                    <div className="w-5 h-5 rounded-full border-2 border-primary text-primary flex items-center justify-center">
+                      <span className="text-xs font-bold">...</span>
+                    </div>
+                  </div>
+                  <h4 className="font-bold text-on-surface mb-1">{reportDef.title}</h4>
+                  <p className="text-xs text-on-surface-variant mb-4">Vencimento: {reportDef.date}</p>
+                  <span className="bg-blue-100 text-blue-800 text-[10px] font-bold uppercase px-2 py-1 rounded">Em Aberto</span>
+                </div>
+              );
+            }
+            
+            return (
+              <div key={reportDef.id} className="bento-card bg-surface-container-lowest opacity-60 border border-dashed border-outline-variant">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{reportDef.period}</span>
+                </div>
+                <h4 className="font-bold text-on-surface-variant mb-1">{reportDef.title}</h4>
+                <p className="text-xs text-on-surface-variant mb-4">Programado para {reportDef.date}</p>
               </div>
-            </div>
-            <h4 className="font-bold text-on-surface mb-1">Relatório Parcial 01</h4>
-            <p className="text-xs text-on-surface-variant mb-4">Entregue em 15/02/2024</p>
-            <span className="bg-teal-100 text-teal-800 text-[10px] font-bold uppercase px-2 py-1 rounded">Entregue</span>
-          </div>
-
-          <div className="bento-card border-2 border-primary relative overflow-hidden shadow-md">
-            <div className="flex justify-between items-start mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">6-12 Meses</span>
-              <div className="w-5 h-5 rounded-full border-2 border-primary text-primary flex items-center justify-center">
-                <span className="text-xs font-bold">...</span>
-              </div>
-            </div>
-            <h4 className="font-bold text-on-surface mb-1">Relatório Parcial 02</h4>
-            <p className="text-xs text-on-surface-variant mb-4">Vencimento: 15/08/2024</p>
-            <span className="bg-blue-100 text-blue-800 text-[10px] font-bold uppercase px-2 py-1 rounded">Em Aberto</span>
-          </div>
-
-          <div className="bento-card bg-surface-container-lowest opacity-60 border border-dashed border-outline-variant">
-            <div className="flex justify-between items-start mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">12-18 Meses</span>
-            </div>
-            <h4 className="font-bold text-on-surface-variant mb-1">Relatório Parcial 03</h4>
-            <p className="text-xs text-on-surface-variant mb-4">Programado para Fev/2025</p>
-          </div>
-
-          <div className="bento-card bg-surface-container-lowest opacity-60 border border-dashed border-outline-variant">
-            <div className="flex justify-between items-start mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Conclusão</span>
-            </div>
-            <h4 className="font-bold text-on-surface-variant mb-1">Relatório Final</h4>
-            <p className="text-xs text-on-surface-variant mb-4">Encerramento do Ciclo</p>
-          </div>
+            );
+          })}
         </div>
       </section>
 
@@ -310,6 +498,40 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
         </div>
       )}
 
+      {/* Modal Solicitar Prorrogação */}
+      {isExtensionModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <h3 className="text-xl font-bold text-on-surface">Solicitar Prorrogação</h3>
+              <button onClick={() => setIsExtensionModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleRequestExtension} className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg flex items-start gap-3 mb-4">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <p className="text-sm">
+                  A prorrogação pode ser solicitada por até 1 ano. Isso adicionará novos relatórios parciais (a cada 6 meses) e adiará o Relatório Final. A solicitação será avaliada pelo gestor.
+                </p>
+              </div>
+              <div>
+                <label className="label-text">Assunto</label>
+                <input type="text" required value={extensionRequest.assunto} onChange={e => setExtensionRequest({...extensionRequest, assunto: e.target.value})} className="input-field" placeholder="Ex: Solicitação de Prorrogação de Prazo" />
+              </div>
+              <div>
+                <label className="label-text">Motivo / Justificativa</label>
+                <textarea required rows={4} value={extensionRequest.motivo} onChange={e => setExtensionRequest({...extensionRequest, motivo: e.target.value})} className="input-field resize-none" placeholder="Explique detalhadamente o motivo da necessidade de prorrogação do prazo da pesquisa..."></textarea>
+              </div>
+              <div className="pt-4 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsExtensionModalOpen(false)} className="btn-secondary">Cancelar</button>
+                <button type="submit" className="btn-primary">Enviar Solicitação</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal Visualizar Despesa */}
       {selectedExpense && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in">
@@ -383,14 +605,13 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); alert('Relatório enviado com sucesso!'); setIsReportModalOpen(false); }} className="p-6 space-y-4">
+            <form onSubmit={handleAddReport} className="p-6 space-y-4">
               <div>
                 <label className="label-text">Tipo de Relatório</label>
-                <select required className="input-field">
-                  <option value="">Selecione...</option>
-                  <option value="parcial_02">Relatório Parcial 02</option>
-                  <option value="parcial_03">Relatório Parcial 03</option>
-                  <option value="final">Relatório Final</option>
+                <select required value={newReport.tipo} onChange={e => setNewReport({...newReport, tipo: e.target.value})} className="input-field">
+                  {reportsWithDates.map(report => (
+                    <option key={report.id} value={report.id}>{report.title}</option>
+                  ))}
                 </select>
               </div>
               <div>

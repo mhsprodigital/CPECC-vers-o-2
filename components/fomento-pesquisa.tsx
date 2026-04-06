@@ -2,9 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { ArrowLeft, ArrowRight, Plus, Trash2, Upload, Check, Search, Edit2, FileText } from 'lucide-react';
-import { saveToLocal, getFromLocal, getOneFromLocal, mockUploadFile } from '@/lib/local-storage';
+import { ArrowLeft, ArrowRight, Plus, Trash2, Upload, Check, Search, Edit2, FileText, AlertCircle } from 'lucide-react';
+import { saveToLocal, getFromLocal, getOneFromLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
+import { supabase } from '@/lib/supabase';
+import { uploadToGoogleDrive } from '@/lib/google-drive';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 const STEPS = ['Projeto', 'Orçamento', 'Equipe', 'Anexos', 'Revisão'];
 
@@ -13,6 +17,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   
   // Form States
   const [formData, setFormData] = useState({
@@ -36,19 +41,28 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
   useEffect(() => {
     const fetchProfile = async () => {
       if (user) {
-        const data = getOneFromLocal('researchers', user.uid);
-        if (data && (!initialData || !initialData.equipe || initialData.equipe.length === 0)) {
-          setUserProfile(data);
-          // Add the current user as the leader automatically if not editing an existing team
-          setEquipe([{
-            nome: data.nome,
-            cpf: data.cpf,
-            titulacao: data.titulacao || 'Não informada',
-            lattes: data.lattes || '',
-            papel: 'Líder'
-          }]);
-        } else if (data) {
-          setUserProfile(data);
+        try {
+          const { data, error } = await supabase
+            .from('researchers')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+            
+          if (data) {
+            const profileData = { ...data, ...data.raw_data };
+            setUserProfile(profileData);
+            if (!initialData || !initialData.equipe || initialData.equipe.length === 0) {
+              setEquipe([{
+                nome: profileData.nome,
+                cpf: profileData.cpf,
+                titulacao: profileData.titulacao || 'Não informada',
+                lattes: profileData.lattes || '',
+                papel: 'Líder'
+              }]);
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching profile:', err);
         }
       }
     };
@@ -112,45 +126,54 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
   const totalOrcamento = orcamento.reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0);
   const formattedTotal = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalOrcamento);
 
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleSubmit = async (isDraft = false) => {
     if (!user || !userProfile) return;
     if (!isDraft && !declarationAccepted) {
-      alert('Você deve aceitar a declaração de veracidade para submeter o projeto.');
+      showToast('Você deve aceitar a declaração de veracidade para submeter o projeto.', 'error');
       return;
     }
     setLoading(true);
 
     try {
-      // Create folder path: titulo - cpf
-      const folderName = `${formData.titulo.substring(0, 30)} - ${userProfile.cpf}`;
-      
-      // Upload files (optional now, but if they exist, upload them)
+      // Upload files to Google Drive
       const uploadedDocs: Record<string, string> = {};
       for (const [key, file] of Object.entries(files)) {
-        const url = await mockUploadFile(file);
+        const url = await uploadToGoogleDrive(file, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
         uploadedDocs[key] = url;
       }
 
-      // Save project
-      const projectData = {
+      // Save project to Supabase
+      const rawData = {
         ...formData,
-        authorUid: user.uid,
         cronograma_json: JSON.stringify(cronograma),
         orcamento_json: JSON.stringify(orcamento),
         equipe_json: JSON.stringify(equipe),
         anexos_json: JSON.stringify(uploadedDocs),
-        status: isDraft ? 'Rascunho' : 'Em Análise',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      saveToLocal('fomento_pesquisa', projectData);
+      const { error } = await supabase
+        .from('projects')
+        .insert({
+          author_id: user.id,
+          type: 'fomento_pesquisa',
+          status: isDraft ? 'Rascunho' : 'Em Análise',
+          raw_data: rawData
+        });
+
+      if (error) throw error;
       
-      alert(isDraft ? 'Rascunho salvo com sucesso!' : 'Projeto submetido com sucesso!');
-      onBack();
+      showToast(isDraft ? 'Rascunho salvo com sucesso!' : 'Projeto submetido com sucesso!', 'success');
+      setTimeout(() => {
+        onBack();
+      }, 1500);
     } catch (error) {
       console.error('Error submitting project:', error);
-      alert('Erro ao salvar o projeto. Tente novamente.');
+      showToast('Erro ao salvar o projeto. Tente novamente.', 'error');
     } finally {
       setLoading(false);
     }
@@ -160,6 +183,11 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 relative pb-24">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
+          {toastMessage.message}
+        </div>
+      )}
       {/* Floating Dashboard (Visible on Budget and Review steps) */}
       {(currentStep === 1 || currentStep === 4) && (
         <div className="fixed top-24 right-8 z-50 glass-panel p-4 rounded-xl shadow-lg border border-primary/20 hidden lg:flex flex-col items-end animate-in slide-in-from-right-8">
@@ -551,7 +579,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
             <button
               onClick={() => {
                 if (currentStep === 0 && wordCount > 500) {
-                  alert('O resumo não pode ultrapassar 500 palavras.');
+                  showToast('O resumo não pode ultrapassar 500 palavras.', 'error');
                   return;
                 }
                 setCurrentStep(Math.min(STEPS.length - 1, currentStep + 1));

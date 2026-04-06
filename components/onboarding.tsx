@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { Check, ChevronRight, ChevronLeft, Upload } from 'lucide-react';
-import { saveToLocal, mockUploadFile } from '@/lib/local-storage';
+import { mockUploadFile } from '@/lib/local-storage';
 import { formatCPF, formatPhone, formatCEP } from '@/lib/formatters';
+import { supabase } from '@/lib/supabase';
 
 const STEPS = [
   'Dados Pessoais',
@@ -19,7 +20,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState<any>(initialData || {
-    nome: user?.displayName || '',
+    nome: user?.user_metadata?.full_name || '',
     email_inst: user?.email || '',
   });
   const [historicoFormacao, setHistoricoFormacao] = useState<any[]>(initialData?.historico_formacao || []);
@@ -91,6 +92,13 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
   const progress = calculateProgress();
 
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     let formattedValue = value;
@@ -139,36 +147,37 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
         uploadedDocs[key] = url;
       }
 
-      // Save profile
-      const profileData = {
+      // Save profile to Supabase
+      const rawData = {
         ...initialData,
         ...formData,
         historico_formacao: historicoFormacao,
-        uid: user.uid,
-        status: initialData?.status || 'Ativo',
         foto_perfil: uploadedDocs['foto_perfil'] || initialData?.foto_perfil,
         documentos_json: Object.keys(uploadedDocs).length > 0 ? JSON.stringify(uploadedDocs) : initialData?.documentos_json,
-        createdAt: initialData?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      saveToLocal('researchers', profileData);
+      const hasNewDocs = Object.keys(uploadedDocs).length > 0;
+      const newStatus = hasNewDocs ? 'Pendente' : (initialData?.status || 'Ativo');
 
-      // Save public profile for team search
-      const publicProfileData = {
-        uid: user.uid,
-        nome: formData.nome || '',
-        cpf: formData.cpf || '',
-        titulacao: formData.titulacao || '',
-        lattes: formData.lattes || '',
-      };
+      const { error } = await supabase
+        .from('researchers')
+        .upsert({
+          id: user.id,
+          nome: formData.nome || '',
+          cpf: formData.cpf || '',
+          email_inst: formData.email_inst || '',
+          titulacao: formData.titulacao || '',
+          lattes: formData.lattes || '',
+          status: newStatus,
+          raw_data: rawData
+        });
 
-      saveToLocal('researchers_public', publicProfileData);
+      if (error) throw error;
 
       onComplete();
     } catch (error) {
       console.error('Error saving profile:', error);
-      alert('Erro ao salvar o perfil. Tente novamente.');
+      showToast('Erro ao salvar o perfil. Tente novamente.', 'error');
     } finally {
       setLoading(false);
     }
@@ -176,6 +185,11 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
   return (
     <div className="min-h-screen bg-surface py-12 px-4 sm:px-6 lg:px-8">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
+          {toastMessage.message}
+        </div>
+      )}
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-primary mb-2">Perfil do Pesquisador</h1>

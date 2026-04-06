@@ -156,7 +156,7 @@ export default function AcompanhamentoPublicacao({ project, onBack }: { project?
             <div className="space-y-3 text-sm">
               <div className="flex justify-between">
                 <span className="text-on-surface-variant">Taxa APC Original</span>
-                <span className="font-mono">{data.moeda} {data.valor_apc.toFixed(2)}</span>
+                <span className="font-mono">{data.moeda} {Number(data.valor_apc).toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-green-600">
                 <span>Desconto Institucional</span>
@@ -164,7 +164,7 @@ export default function AcompanhamentoPublicacao({ project, onBack }: { project?
               </div>
               <div className="pt-3 border-t border-gray-200 flex justify-between font-bold text-lg">
                 <span>Total a Pagar</span>
-                <span className="font-mono">{data.moeda} {data.valor_apc.toFixed(2)}</span>
+                <span className="font-mono">{data.moeda} {Number(data.valor_apc).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -188,31 +188,26 @@ export default function AcompanhamentoPublicacao({ project, onBack }: { project?
               <Paperclip className="w-4 h-4 text-primary" /> Documentos Vinculados
             </h3>
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded transition-colors cursor-pointer border border-transparent hover:border-gray-200">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded bg-red-50 text-red-500 flex items-center justify-center">
-                    <FileText className="w-4 h-4" />
+              {project?.raw_data?.files && Object.keys(project.raw_data.files).length > 0 ? (
+                Object.entries(project.raw_data.files).map(([key, url]) => (
+                  <div key={key} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded transition-colors cursor-pointer border border-transparent hover:border-gray-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded bg-red-50 text-red-500 flex items-center justify-center">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-on-surface">{key}</p>
+                        <p className="text-xs text-on-surface-variant">Documento anexado</p>
+                      </div>
+                    </div>
+                    <a href={url as string} target="_blank" rel="noreferrer" className="text-primary hover:bg-primary/10 p-1.5 rounded">
+                      <Download className="w-4 h-4" />
+                    </a>
                   </div>
-                  <div>
-                    <p className="text-sm font-bold text-on-surface">Artigo_Final_v2.pdf</p>
-                    <p className="text-xs text-on-surface-variant">2.4 MB</p>
-                  </div>
-                </div>
-                <Download className="w-4 h-4 text-on-surface-variant" />
-              </div>
-              
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded transition-colors cursor-pointer border border-transparent hover:border-gray-200">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded bg-blue-50 text-blue-500 flex items-center justify-center">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-on-surface">Carta_Aceite_Nature.pdf</p>
-                    <p className="text-xs text-on-surface-variant">845 KB</p>
-                  </div>
-                </div>
-                <Download className="w-4 h-4 text-on-surface-variant" />
-              </div>
+                ))
+              ) : (
+                <p className="text-sm text-on-surface-variant text-center py-4">Nenhum documento anexado.</p>
+              )}
             </div>
           </div>
         </div>

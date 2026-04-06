@@ -1,10 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { ArrowLeft, ArrowRight, Check, Upload, Search, Plus, Trash2, FileText } from 'lucide-react';
-import { saveToLocal, getFromLocal, mockUploadFile } from '@/lib/local-storage';
+import { saveToLocal, getFromLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
+import { supabase } from '@/lib/supabase';
+import { uploadToGoogleDrive } from '@/lib/google-drive';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 const STEPS = ['Registro do Artigo', 'Upload de Documentos', 'Revisão Institucional'];
 
@@ -12,6 +16,18 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
   const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (user) {
+        const { data } = await supabase.from('researchers').select('*').eq('id', user.id).single();
+        if (data) setUserProfile(data);
+      }
+    };
+    fetchProfile();
+  }, [user]);
   
   const [formData, setFormData] = useState({
     titulo: initialData?.titulo || '',
@@ -36,7 +52,7 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
   // Initialize with current user as main author
   useState(() => {
     if (user && (!initialData || !initialData.autores || initialData.autores.length === 0)) {
-      const profile = getFromLocal('researchers', 'uid', user.uid)[0];
+      const profile = getFromLocal('researchers', 'uid', user.id)[0];
       if (profile) {
         setAutores([{ ...profile, papel: 'Autor Principal' }]);
       }
@@ -95,9 +111,14 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
     }
   };
 
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleSubmit = async (e: React.FormEvent, isDraft = false) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !userProfile) return;
     setLoading(true);
 
     try {
@@ -105,39 +126,51 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
       let resumo_url = '';
       let aceite_url = '';
 
-      if (files.artigo) artigo_url = await mockUploadFile(files.artigo);
-      if (files.resumo) resumo_url = await mockUploadFile(files.resumo);
-      if (files.aceite) aceite_url = await mockUploadFile(files.aceite);
+      if (files.artigo) artigo_url = await uploadToGoogleDrive(files.artigo, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
+      if (files.resumo) resumo_url = await uploadToGoogleDrive(files.resumo, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
+      if (files.aceite) aceite_url = await uploadToGoogleDrive(files.aceite, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
 
-      const projectData = {
+      const rawData = {
         ...formData,
         valor_apc: parseFloat(formData.valor_apc) || 0,
-        authorUid: user.uid,
         autores,
         documentos: {
           artigo_url,
           resumo_url,
           aceite_url
-        },
-        status: isDraft ? 'Rascunho' : 'Em Análise',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        }
       };
 
-      saveToLocal('fomento_publicacao', projectData);
-      
-      alert(isDraft ? 'Rascunho salvo com sucesso!' : 'Solicitação de fomento para publicação submetida com sucesso!');
-      onBack();
+      const { error } = await supabase
+        .from('projects')
+        .insert({
+          author_id: user.id,
+          type: 'fomento_publicacao',
+          status: isDraft ? 'Rascunho' : 'Em Análise',
+          raw_data: rawData
+        });
+
+      if (error) throw error;
+
+      showToast(isDraft ? 'Rascunho salvo com sucesso!' : 'Solicitação de fomento para publicação submetida com sucesso!', 'success');
+      setTimeout(() => {
+        onBack();
+      }, 1500);
     } catch (error) {
       console.error('Error submitting publication funding:', error);
-      alert('Erro ao salvar. Tente novamente.');
+      showToast('Erro ao salvar. Tente novamente.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-4">
+    <div className="animate-in fade-in slide-in-from-bottom-4 relative pb-24">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
+          {toastMessage.message}
+        </div>
+      )}
       <header className="mb-12">
         <button onClick={onBack} className="flex items-center gap-2 text-primary font-bold text-sm mb-6 hover:underline">
           <ArrowLeft className="w-4 h-4" /> Voltar ao Dashboard
