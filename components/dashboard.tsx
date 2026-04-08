@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [selectedProject, setSelectedProject] = useState<any>(null);
   const [projectToCancel, setProjectToCancel] = useState<string | null>(null);
   const [projectDetailsModal, setProjectDetailsModal] = useState<any | null>(null);
+  const [readOnlyProject, setReadOnlyProject] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -122,9 +123,9 @@ export default function Dashboard() {
   const renderContent = () => {
     switch (currentView) {
       case 'fomento-pesquisa':
-        return <FomentoPesquisa onBack={() => setCurrentView('dashboard')} initialData={selectedProject} />;
+        return <FomentoPesquisa onBack={() => { setCurrentView('dashboard'); setReadOnlyProject(false); }} initialData={selectedProject} readOnly={readOnlyProject} />;
       case 'fomento-publicacao':
-        return <FomentoPublicacao onBack={() => setCurrentView('dashboard')} initialData={selectedProject} />;
+        return <FomentoPublicacao onBack={() => { setCurrentView('dashboard'); setReadOnlyProject(false); }} initialData={selectedProject} readOnly={readOnlyProject} />;
       case 'profile':
         return (
           <div className="animate-in fade-in slide-in-from-bottom-4">
@@ -577,6 +578,21 @@ export default function Dashboard() {
                   </button>
                 ) : projectDetailsModal.status !== 'Cancelado pelo Pesquisador' ? (
                   <>
+                    <button 
+                      onClick={() => {
+                        setSelectedProject(projectDetailsModal);
+                        setReadOnlyProject(true);
+                        if (projectDetailsModal.type === 'Fomento para Publicação') {
+                          setCurrentView('fomento-publicacao');
+                        } else {
+                          setCurrentView('fomento-pesquisa');
+                        }
+                        setProjectDetailsModal(null);
+                      }}
+                      className="px-4 py-2 bg-surface-container-low text-primary text-sm font-bold rounded-lg hover:bg-surface-container transition-colors"
+                    >
+                      Visualizar Dados Submetidos
+                    </button>
                     {projectDetailsModal.type === 'Fomento para Publicação' && (
                       <button 
                         onClick={() => {

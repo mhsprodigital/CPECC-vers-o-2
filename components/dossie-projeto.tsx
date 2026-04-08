@@ -1,10 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, FileText, Plus, TrendingUp, Landmark, CheckCircle2, AlertCircle, Eye, Download, Edit2, AlertTriangle, X, MessageSquare, Check, Upload, Clock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth-context';
+import { uploadToGoogleDrive } from '@/lib/google-drive';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 export default function DossieProjeto({ project, onBack }: { project?: any, onBack: () => void }) {
+  const { user } = useAuth();
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (user) {
+        const { data } = await supabase.from('researchers').select('*').eq('id', user.id).single();
+        if (data) setUserProfile(data);
+      }
+    };
+    fetchProfile();
+  }, [user]);
+
   const data = project || {};
   const rawData = data.raw_data || {};
 
@@ -27,6 +45,9 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
     data: '',
     resumo: '',
   });
+
+  const [expenseFile, setExpenseFile] = useState<File | null>(null);
+  const [reportFile, setReportFile] = useState<File | null>(null);
 
   const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [extensionRequest, setExtensionRequest] = useState({
@@ -60,20 +81,28 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    const expense = {
-      id: `#${Math.floor(1000 + Math.random() * 9000)}`,
-      descricao: newExpense.descricao,
-      categoria: newExpense.categoria,
-      data: newExpense.data || new Date().toLocaleDateString('pt-BR'),
-      valor: parseFloat(newExpense.valor),
-      status: 'Em Análise',
-      mensagem: 'Comprovação enviada para análise técnica.',
-    };
-    
-    const updatedDespesas = [expense, ...despesas];
-    setDespesas(updatedDespesas);
-    
+    if (!userProfile) return;
+    setLoading(true);
+
     try {
+      let comprovante_url = '';
+      if (expenseFile) {
+        comprovante_url = await uploadToGoogleDrive(expenseFile, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
+      }
+
+      const expense = {
+        id: `#${Math.floor(1000 + Math.random() * 9000)}`,
+        descricao: newExpense.descricao,
+        categoria: newExpense.categoria,
+        data: newExpense.data || new Date().toLocaleDateString('pt-BR'),
+        valor: parseFloat(newExpense.valor),
+        status: 'Em Análise',
+        mensagem: 'Comprovação enviada para análise técnica.',
+        comprovante_url,
+      };
+      
+      const updatedDespesas = [expense, ...despesas];
+      
       const { error } = await supabase
         .from('projects')
         .update({
@@ -85,28 +114,40 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
         .eq('id', data.id);
         
       if (error) throw error;
+      
+      setDespesas(updatedDespesas);
       showToast('Prestação de contas enviada com sucesso.', 'success');
+      setIsExpenseModalOpen(false);
+      setNewExpense({ descricao: '', categoria: 'Material de Consumo', data: '', valor: '' });
+      setExpenseFile(null);
     } catch (error) {
       console.error('Error saving expense:', error);
       showToast('Erro ao salvar prestação de contas.', 'error');
+    } finally {
+      setLoading(false);
     }
-
-    setIsExpenseModalOpen(false);
-    setNewExpense({ descricao: '', categoria: 'Material de Consumo', data: '', valor: '' });
   };
 
   const handleAddReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    const report = {
-      tipo: newReport.tipo,
-      data: new Date().toLocaleDateString('pt-BR'),
-      status: 'Em Análise',
-    };
-
-    const updatedRelatorios = [report, ...relatorios];
-    setRelatorios(updatedRelatorios);
+    if (!userProfile) return;
+    setLoading(true);
 
     try {
+      let arquivo_url = '';
+      if (reportFile) {
+        arquivo_url = await uploadToGoogleDrive(reportFile, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
+      }
+
+      const report = {
+        tipo: newReport.tipo,
+        data: new Date().toLocaleDateString('pt-BR'),
+        status: 'Em Análise',
+        arquivo_url,
+      };
+
+      const updatedRelatorios = [report, ...relatorios];
+
       const { error } = await supabase
         .from('projects')
         .update({
@@ -118,14 +159,18 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
         .eq('id', data.id);
         
       if (error) throw error;
+      
+      setRelatorios(updatedRelatorios);
       showToast('Relatório enviado com sucesso.', 'success');
+      setIsReportModalOpen(false);
+      setNewReport({ tipo: 'Parcial 01', data: '', resumo: '' });
+      setReportFile(null);
     } catch (error) {
       console.error('Error saving report:', error);
       showToast('Erro ao salvar relatório.', 'error');
+    } finally {
+      setLoading(false);
     }
-
-    setIsReportModalOpen(false);
-    setNewReport({ tipo: 'Parcial 01', data: '', resumo: '' });
   };
 
   const handleRequestExtension = async (e: React.FormEvent) => {
@@ -487,11 +532,13 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
               </div>
               <div>
                 <label className="label-text">Comprovante Fiscal (PDF/JPG)</label>
-                <input type="file" required accept=".pdf,.jpg,.jpeg,.png" className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full" />
+                <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setExpenseFile(e.target.files?.[0] || null)} className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full" />
               </div>
               <div className="pt-4 flex justify-end gap-3">
                 <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="btn-secondary">Cancelar</button>
-                <button type="submit" className="btn-primary">Salvar Despesa</button>
+                <button type="submit" disabled={loading} className="btn-primary">
+                  {loading ? 'Salvando...' : 'Salvar Despesa'}
+                </button>
               </div>
             </form>
           </div>
@@ -619,12 +666,14 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
                 <div className="border-2 border-dashed border-outline-variant/50 rounded-xl bg-surface-container-lowest p-6 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors">
                   <Upload className="w-8 h-8 text-primary mb-2 opacity-50" />
                   <p className="text-xs text-on-surface-variant mb-4">Arraste ou clique para selecionar</p>
-                  <input type="file" required accept=".pdf" className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full max-w-[200px]" />
+                  <input type="file" required accept=".pdf" onChange={(e) => setReportFile(e.target.files?.[0] || null)} className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full max-w-[200px]" />
                 </div>
               </div>
               <div className="pt-4 flex justify-end gap-3">
                 <button type="button" onClick={() => setIsReportModalOpen(false)} className="btn-secondary">Cancelar</button>
-                <button type="submit" className="btn-primary">Enviar Relatório</button>
+                <button type="submit" disabled={loading} className="btn-primary">
+                  {loading ? 'Enviando...' : 'Enviar Relatório'}
+                </button>
               </div>
             </form>
           </div>

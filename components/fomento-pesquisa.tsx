@@ -12,7 +12,7 @@ const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhM
 
 const STEPS = ['Projeto', 'Orçamento', 'Equipe', 'Anexos', 'Revisão'];
 
-export default function FomentoPesquisa({ onBack, initialData }: { onBack: () => void, initialData?: any }) {
+export default function FomentoPesquisa({ onBack, initialData, readOnly = false }: { onBack: () => void, initialData?: any, readOnly?: boolean }) {
   const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -156,14 +156,26 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
         anexos_json: JSON.stringify(uploadedDocs),
       };
 
-      const { error } = await supabase
-        .from('projects')
-        .insert({
-          author_id: user.id,
-          type: 'fomento_pesquisa',
-          status: isDraft ? 'Rascunho' : 'Em Análise',
-          raw_data: rawData
-        });
+      const projectData = {
+        author_id: user.id,
+        type: 'fomento_pesquisa',
+        status: isDraft ? 'Rascunho' : 'Em Análise',
+        raw_data: rawData
+      };
+
+      let error;
+      if (initialData?.id) {
+        const { error: updateError } = await supabase
+          .from('projects')
+          .update(projectData)
+          .eq('id', initialData.id);
+        error = updateError;
+      } else {
+        const { error: insertError } = await supabase
+          .from('projects')
+          .insert(projectData);
+        error = insertError;
+      }
 
       if (error) throw error;
       
@@ -227,27 +239,29 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
             
             <div>
               <label className="label-text">Título do Projeto</label>
-              <input type="text" name="titulo" value={formData.titulo} onChange={handleInputChange} maxLength={200} className="input-field" placeholder="Ex: Análise Epidemiológica..." required />
+              <input type="text" name="titulo" value={formData.titulo} onChange={handleInputChange} maxLength={200} className="input-field" placeholder="Ex: Análise Epidemiológica..." required disabled={readOnly} />
               <div className="text-right mt-1"><span className="text-[10px] text-on-surface-variant">{formData.titulo.length}/200 caracteres</span></div>
             </div>
 
             <div>
               <label className="label-text">Resumo da Proposta</label>
-              <textarea name="resumo" value={formData.resumo} onChange={handleInputChange} rows={4} className="input-field" placeholder="Sintetize os objetivos e justificativa..." required />
+              <textarea name="resumo" value={formData.resumo} onChange={handleInputChange} rows={4} className="input-field" placeholder="Sintetize os objetivos e justificativa..." required disabled={readOnly} />
               <div className="text-right mt-1"><span className={`text-[10px] ${wordCount > 500 ? 'text-red-500 font-bold' : 'text-on-surface-variant'}`}>{wordCount}/500 palavras</span></div>
             </div>
 
             <div>
               <label className="label-text">Metodologia</label>
-              <textarea name="metodologia" value={formData.metodologia} onChange={handleInputChange} rows={6} className="input-field" placeholder="Descreva detalhadamente o desenho do estudo..." required />
+              <textarea name="metodologia" value={formData.metodologia} onChange={handleInputChange} rows={6} className="input-field" placeholder="Descreva detalhadamente o desenho do estudo..." required disabled={readOnly} />
             </div>
 
             <div className="bg-surface-container-lowest p-6 rounded-lg border border-gray-200">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="font-bold text-lg">Cronograma de Atividades</h3>
-                <button type="button" onClick={() => setCronograma([...cronograma, { atividade: '', inicio: '', termino: '' }])} className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-surface-container px-3 py-2 rounded transition-colors">
-                  <Plus className="w-4 h-4" /> Adicionar Marco
-                </button>
+                {!readOnly && (
+                  <button type="button" onClick={() => setCronograma([...cronograma, { atividade: '', inicio: '', termino: '' }])} className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-surface-container px-3 py-2 rounded transition-colors">
+                    <Plus className="w-4 h-4" /> Adicionar Marco
+                  </button>
+                )}
               </div>
               
               <div className="space-y-4">
@@ -257,21 +271,21 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                       <label className="label-text text-xs uppercase">Atividade/Marco Civil</label>
                       <input type="text" value={item.atividade} onChange={(e) => {
                         const newC = [...cronograma]; newC[index].atividade = e.target.value; setCronograma(newC);
-                      }} className="input-field py-2" placeholder="Ex: Coleta de Dados" />
+                      }} className="input-field py-2" placeholder="Ex: Coleta de Dados" disabled={readOnly} />
                     </div>
                     <div>
                       <label className="label-text text-xs uppercase">Início</label>
                       <input type="month" value={item.inicio} onChange={(e) => {
                         const newC = [...cronograma]; newC[index].inicio = e.target.value; setCronograma(newC);
-                      }} className="input-field py-2" />
+                      }} className="input-field py-2" disabled={readOnly} />
                     </div>
                     <div>
                       <label className="label-text text-xs uppercase">Término</label>
                       <input type="month" value={item.termino} onChange={(e) => {
                         const newC = [...cronograma]; newC[index].termino = e.target.value; setCronograma(newC);
-                      }} className="input-field py-2" />
+                      }} className="input-field py-2" disabled={readOnly} />
                     </div>
-                    {cronograma.length > 1 && (
+                    {!readOnly && cronograma.length > 1 && (
                       <button type="button" onClick={() => setCronograma(cronograma.filter((_: any, i: number) => i !== index))} className="absolute -top-3 -right-3 bg-white text-red-500 rounded-full p-1 shadow-sm hover:bg-red-50">
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -304,7 +318,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                       <label className="md:hidden label-text text-xs uppercase">Categoria</label>
                       <select value={item.categoria} onChange={(e) => {
                         const newO = [...orcamento]; newO[index].categoria = e.target.value; setOrcamento(newO);
-                      }} className="input-field py-2 text-sm">
+                      }} className="input-field py-2 text-sm" disabled={readOnly}>
                         <option>Equipamento e Material Permanente</option>
                         <option>Material de Consumo</option>
                         <option>Serviços de Terceiros - PF</option>
@@ -317,20 +331,20 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                       <label className="md:hidden label-text text-xs uppercase">Descrição</label>
                       <input type="text" value={item.descricao} onChange={(e) => {
                         const newO = [...orcamento]; newO[index].descricao = e.target.value; setOrcamento(newO);
-                      }} placeholder="Descrição do item" className="input-field py-2 text-sm" />
+                      }} placeholder="Descrição do item" className="input-field py-2 text-sm" disabled={readOnly} />
                     </div>
                     <div className="md:col-span-1">
                       <label className="md:hidden label-text text-xs uppercase">Qtd</label>
                       <input type="number" min="1" value={item.qtd} onChange={(e) => {
                         const newO = [...orcamento]; newO[index].qtd = parseInt(e.target.value) || 0; setOrcamento(newO);
-                      }} className="input-field py-2 text-sm text-center" />
+                      }} className="input-field py-2 text-sm text-center" disabled={readOnly} />
                     </div>
                     <div className="md:col-span-2 relative">
                       <label className="md:hidden label-text text-xs uppercase">Valor Unitário</label>
                       <span className="absolute left-3 top-9 md:top-2.5 text-sm text-on-surface-variant">R$</span>
                       <input type="number" min="0" step="0.01" value={item.valor} onChange={(e) => {
                         const newO = [...orcamento]; newO[index].valor = parseFloat(e.target.value) || 0; setOrcamento(newO);
-                      }} className="input-field py-2 pl-8 text-sm text-right" />
+                      }} className="input-field py-2 pl-8 text-sm text-right" disabled={readOnly} />
                     </div>
                     <div className="md:col-span-2 flex items-center justify-between gap-2 mt-2 md:mt-0">
                       <div className="w-full text-right">
@@ -339,7 +353,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                           {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.qtd * item.valor)}
                         </span>
                       </div>
-                      {orcamento.length > 1 && (
+                      {!readOnly && orcamento.length > 1 && (
                         <button type="button" onClick={() => setOrcamento(orcamento.filter((_: any, i: number) => i !== index))} className="text-on-surface-variant hover:text-red-500 p-1 bg-surface rounded-full">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -350,9 +364,11 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
               </div>
               
               <div className="p-4 bg-gray-50 border-t border-gray-200">
-                <button type="button" onClick={() => setOrcamento([...orcamento, { categoria: 'Material de Consumo', descricao: '', qtd: 1, valor: 0 }])} className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:opacity-70 transition-opacity">
-                  <Plus className="w-4 h-4" /> Adicionar Item
-                </button>
+                {!readOnly && (
+                  <button type="button" onClick={() => setOrcamento([...orcamento, { categoria: 'Material de Consumo', descricao: '', qtd: 1, valor: 0 }])} className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:opacity-70 transition-opacity">
+                    <Plus className="w-4 h-4" /> Adicionar Item
+                  </button>
+                )}
               </div>
             </div>
 
@@ -376,53 +392,55 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
           <div className="space-y-8 animate-in fade-in">
             <h2 className="text-2xl font-bold text-primary border-l-4 border-primary pl-4">Composição da Equipe</h2>
             
-            <div className="bg-surface-container-lowest p-6 rounded-lg border border-gray-200 mb-8">
-              <h3 className="font-bold text-lg mb-4">Adicionar Membro</h3>
-              <div className="flex flex-col md:flex-row gap-4 items-end">
-                <div className="flex-1 w-full">
-                  <label className="label-text">Buscar por CPF</label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 w-5 h-5 text-on-surface-variant" />
-                    <input 
-                      type="text" 
-                      value={searchCpf} 
-                      onChange={(e) => setSearchCpf(formatCPF(e.target.value))} 
-                      className="input-field pl-10" 
-                      placeholder="000.000.000-00" 
-                    />
+            {!readOnly && (
+              <div className="bg-surface-container-lowest p-6 rounded-lg border border-gray-200 mb-8">
+                <h3 className="font-bold text-lg mb-4">Adicionar Membro</h3>
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                  <div className="flex-1 w-full">
+                    <label className="label-text">Buscar por CPF</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 w-5 h-5 text-on-surface-variant" />
+                      <input 
+                        type="text" 
+                        value={searchCpf} 
+                        onChange={(e) => setSearchCpf(formatCPF(e.target.value))} 
+                        className="input-field pl-10" 
+                        placeholder="000.000.000-00" 
+                      />
+                    </div>
                   </div>
-                </div>
-                <button 
-                  type="button" 
-                  onClick={handleSearchCpf}
-                  disabled={searchLoading || !searchCpf}
-                  className="btn-primary whitespace-nowrap"
-                >
-                  {searchLoading ? 'Buscando...' : 'Buscar Pesquisador'}
-                </button>
-              </div>
-
-              {searchError && (
-                <p className="text-red-500 text-sm mt-2 font-medium">{searchError}</p>
-              )}
-
-              {searchResult && (
-                <div className="mt-6 p-4 border border-primary/30 bg-primary/5 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
-                  <div>
-                    <h4 className="font-bold text-on-surface">{searchResult.nome}</h4>
-                    <p className="text-sm text-on-surface-variant">CPF: {searchResult.cpf} • {searchResult.titulacao}</p>
-                    {searchResult.lattes && (
-                      <a href={searchResult.lattes} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline mt-1 inline-block">
-                        Ver Currículo Lattes
-                      </a>
-                    )}
-                  </div>
-                  <button type="button" onClick={handleAddMember} className="btn-secondary text-sm py-2">
-                    Adicionar à Equipe
+                  <button 
+                    type="button" 
+                    onClick={handleSearchCpf}
+                    disabled={searchLoading || !searchCpf}
+                    className="btn-primary whitespace-nowrap"
+                  >
+                    {searchLoading ? 'Buscando...' : 'Buscar Pesquisador'}
                   </button>
                 </div>
-              )}
-            </div>
+
+                {searchError && (
+                  <p className="text-red-500 text-sm mt-2 font-medium">{searchError}</p>
+                )}
+
+                {searchResult && (
+                  <div className="mt-6 p-4 border border-primary/30 bg-primary/5 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div>
+                      <h4 className="font-bold text-on-surface">{searchResult.nome}</h4>
+                      <p className="text-sm text-on-surface-variant">CPF: {searchResult.cpf} • {searchResult.titulacao}</p>
+                      {searchResult.lattes && (
+                        <a href={searchResult.lattes} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline mt-1 inline-block">
+                          Ver Currículo Lattes
+                        </a>
+                      )}
+                    </div>
+                    <button type="button" onClick={handleAddMember} className="btn-secondary text-sm py-2">
+                      Adicionar à Equipe
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {equipe.map((membro: any, index: number) => (
@@ -430,7 +448,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                   {index === 0 && (
                     <span className="absolute top-4 right-4 text-[10px] bg-secondary text-white px-2 py-1 rounded font-bold uppercase">Líder</span>
                   )}
-                  {index > 0 && (
+                  {!readOnly && index > 0 && (
                     <button type="button" onClick={() => setEquipe(equipe.filter((_: any, i: number) => i !== index))} className="absolute top-4 right-4 text-on-surface-variant hover:text-red-500">
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -451,7 +469,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                       <label className="text-xs font-bold uppercase text-on-surface-variant mb-1 block">Papel no Projeto</label>
                       <select value={membro.papel} onChange={(e) => {
                         const newE = [...equipe]; newE[index].papel = e.target.value; setEquipe(newE);
-                      }} className="w-full bg-surface border-none rounded p-2 text-sm">
+                      }} className="w-full bg-surface border-none rounded p-2 text-sm" disabled={readOnly}>
                         <option>Pesquisador</option>
                         <option>Bolsista</option>
                         <option>Apoio Técnico</option>
@@ -482,14 +500,16 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                   <Upload className="w-8 h-8 text-primary mb-3 opacity-50" />
                   <h4 className="font-bold text-on-surface mb-1 text-sm">{doc.label}</h4>
                   <p className="text-xs text-on-surface-variant mb-4">{doc.desc}</p>
-                  <input
-                    type="file"
-                    name={doc.id}
-                    onChange={handleFileChange}
-                    accept=".pdf,.zip"
-                    className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full"
-                  />
-                  {files[doc.id] && (
+                  {!readOnly && (
+                    <input
+                      type="file"
+                      name={doc.id}
+                      onChange={handleFileChange}
+                      accept=".pdf,.zip"
+                      className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full"
+                    />
+                  )}
+                  {(files[doc.id] || (initialData?.documentos_json && JSON.parse(initialData.documentos_json)[doc.id])) && (
                     <div className="absolute top-3 right-3 bg-green-100 text-green-600 p-1 rounded-full">
                       <Check className="w-4 h-4" />
                     </div>
@@ -507,9 +527,11 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Resumo do Projeto */}
               <div className="bg-surface-container-lowest p-6 rounded-xl border border-gray-200 relative">
-                <button onClick={() => setCurrentStep(0)} className="absolute top-6 right-6 text-primary text-sm font-bold uppercase flex items-center gap-1 hover:underline">
-                  <Edit2 className="w-4 h-4" /> Editar
-                </button>
+                {!readOnly && (
+                  <button onClick={() => setCurrentStep(0)} className="absolute top-6 right-6 text-primary text-sm font-bold uppercase flex items-center gap-1 hover:underline">
+                    <Edit2 className="w-4 h-4" /> Editar
+                  </button>
+                )}
                 <h3 className="font-manrope font-bold text-sm text-on-surface-variant uppercase tracking-widest mb-4">Dados do Projeto</h3>
                 <p className="font-manrope text-xl font-bold mb-2 text-on-surface">{formData.titulo || 'Sem título preenchido'}</p>
                 <p className="text-sm text-on-surface-variant line-clamp-3 mb-4">{formData.resumo || 'Sem resumo preenchido'}</p>
@@ -521,9 +543,11 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
 
               {/* Resumo do Orçamento */}
               <div className="bg-surface-container-lowest p-6 rounded-xl border border-gray-200 relative flex flex-col justify-center">
-                <button onClick={() => setCurrentStep(1)} className="absolute top-6 right-6 text-primary text-sm font-bold uppercase flex items-center gap-1 hover:underline">
-                  <Edit2 className="w-4 h-4" /> Editar
-                </button>
+                {!readOnly && (
+                  <button onClick={() => setCurrentStep(1)} className="absolute top-6 right-6 text-primary text-sm font-bold uppercase flex items-center gap-1 hover:underline">
+                    <Edit2 className="w-4 h-4" /> Editar
+                  </button>
+                )}
                 <h3 className="font-manrope font-bold text-sm text-on-surface-variant uppercase tracking-widest mb-4">Síntese Financeira</h3>
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center text-primary">
@@ -546,6 +570,7 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
                   checked={declarationAccepted}
                   onChange={(e) => setDeclarationAccepted(e.target.checked)}
                   className="mt-1 w-5 h-5 rounded text-primary focus:ring-primary border-gray-300"
+                  disabled={readOnly}
                 />
                 <span className="text-sm text-yellow-900 font-medium leading-relaxed">
                   Declaro sob as penas da lei que todas as informações prestadas e documentos anexados são verdadeiros e autênticos. Compreendo que a submissão criará um repositório oficial vinculado ao meu CPF e que a falsidade de informações implicará em sanções administrativas e legais.
@@ -565,14 +590,16 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
             >
               <ArrowLeft className="w-4 h-4" /> Voltar
             </button>
-            <button 
-              type="button" 
-              onClick={() => handleSubmit(true)} 
-              disabled={loading}
-              className="btn-secondary flex items-center gap-2 bg-surface-container-low text-on-surface-variant border-none"
-            >
-              Salvar Rascunho
-            </button>
+            {!readOnly && (
+              <button 
+                type="button" 
+                onClick={() => handleSubmit(true)} 
+                disabled={loading}
+                className="btn-secondary flex items-center gap-2 bg-surface-container-low text-on-surface-variant border-none"
+              >
+                Salvar Rascunho
+              </button>
+            )}
           </div>
           
           {currentStep < STEPS.length - 1 ? (
@@ -590,17 +617,19 @@ export default function FomentoPesquisa({ onBack, initialData }: { onBack: () =>
               Próxima Etapa <ArrowRight className="w-4 h-4" />
             </button>
           ) : (
-            <button
-              onClick={() => handleSubmit(false)}
-              disabled={loading || !declarationAccepted}
-              className="btn-primary flex items-center gap-2 text-lg py-4 px-8 shadow-xl"
-            >
-              {loading ? (
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div>
-              ) : (
-                <>Submeter Projeto Oficialmente <Check className="w-5 h-5" /></>
-              )}
-            </button>
+            !readOnly && (
+              <button
+                onClick={() => handleSubmit(false)}
+                disabled={loading || !declarationAccepted}
+                className="btn-primary flex items-center gap-2 text-lg py-4 px-8 shadow-xl"
+              >
+                {loading ? (
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div>
+                ) : (
+                  <>Submeter Projeto Oficialmente <Check className="w-5 h-5" /></>
+                )}
+              </button>
+            )
           )}
         </div>
       </div>

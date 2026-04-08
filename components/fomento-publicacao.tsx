@@ -12,7 +12,7 @@ const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhM
 
 const STEPS = ['Registro do Artigo', 'Upload de Documentos', 'Revisão Institucional'];
 
-export default function FomentoPublicacao({ onBack, initialData }: { onBack: () => void, initialData?: any }) {
+export default function FomentoPublicacao({ onBack, initialData, readOnly = false }: { onBack: () => void, initialData?: any, readOnly?: boolean }) {
   const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -141,14 +141,26 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
         }
       };
 
-      const { error } = await supabase
-        .from('projects')
-        .insert({
-          author_id: user.id,
-          type: 'fomento_publicacao',
-          status: isDraft ? 'Rascunho' : 'Em Análise',
-          raw_data: rawData
-        });
+      const projectData = {
+        author_id: user.id,
+        type: 'fomento_publicacao',
+        status: isDraft ? 'Rascunho' : 'Em Análise',
+        raw_data: rawData
+      };
+
+      let error;
+      if (initialData?.id) {
+        const { error: updateError } = await supabase
+          .from('projects')
+          .update(projectData)
+          .eq('id', initialData.id);
+        error = updateError;
+      } else {
+        const { error: insertError } = await supabase
+          .from('projects')
+          .insert(projectData);
+        error = insertError;
+      }
 
       if (error) throw error;
 
@@ -210,24 +222,24 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label className="label-text">Título Completo do Artigo</label>
-                <input type="text" name="titulo" value={formData.titulo} onChange={handleInputChange} className="input-field" placeholder="Ex: Impactos da Inteligência Artificial..." required />
+                <input type="text" name="titulo" value={formData.titulo} onChange={handleInputChange} className="input-field" placeholder="Ex: Impactos da Inteligência Artificial..." required disabled={readOnly} />
               </div>
 
               <div>
                 <label className="label-text">Revista Alvo (Target Journal)</label>
-                <input type="text" name="revista" value={formData.revista} onChange={handleInputChange} className="input-field" placeholder="Nome da revista" required />
+                <input type="text" name="revista" value={formData.revista} onChange={handleInputChange} className="input-field" placeholder="Nome da revista" required disabled={readOnly} />
               </div>
 
               <div>
                 <label className="label-text">Valor Estimado do APC</label>
                 <div className="flex gap-2">
-                  <select name="moeda" value={formData.moeda} onChange={handleInputChange} className="input-field w-1/3">
+                  <select name="moeda" value={formData.moeda} onChange={handleInputChange} className="input-field w-1/3" disabled={readOnly}>
                     <option value="USD">USD ($)</option>
                     <option value="EUR">EUR (€)</option>
                     <option value="GBP">GBP (£)</option>
                     <option value="BRL">BRL (R$)</option>
                   </select>
-                  <input type="number" name="valor_apc" value={formData.valor_apc} onChange={handleInputChange} min="0" step="0.01" className="input-field w-2/3" placeholder="0.00" required />
+                  <input type="number" name="valor_apc" value={formData.valor_apc} onChange={handleInputChange} min="0" step="0.01" className="input-field w-2/3" placeholder="0.00" required disabled={readOnly} />
                 </div>
               </div>
             </div>
@@ -237,48 +249,50 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                 <h3 className="font-bold text-lg">Lista de Autores</h3>
               </div>
 
-              <div className="bg-surface-container-lowest p-6 rounded-lg border border-gray-200 mb-6">
-                <h4 className="font-bold text-sm mb-4">Adicionar Autor</h4>
-                <div className="flex flex-col md:flex-row gap-4 items-end">
-                  <div className="flex-1 w-full">
-                    <label className="label-text">Buscar por CPF</label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-3 w-5 h-5 text-on-surface-variant" />
-                      <input 
-                        type="text" 
-                        value={searchCpf} 
-                        onChange={(e) => setSearchCpf(formatCPF(e.target.value))} 
-                        className="input-field pl-10" 
-                        placeholder="000.000.000-00" 
-                      />
+              {!readOnly && (
+                <div className="bg-surface-container-lowest p-6 rounded-lg border border-gray-200 mb-6">
+                  <h4 className="font-bold text-sm mb-4">Adicionar Autor</h4>
+                  <div className="flex flex-col md:flex-row gap-4 items-end">
+                    <div className="flex-1 w-full">
+                      <label className="label-text">Buscar por CPF</label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-3 w-5 h-5 text-on-surface-variant" />
+                        <input 
+                          type="text" 
+                          value={searchCpf} 
+                          onChange={(e) => setSearchCpf(formatCPF(e.target.value))} 
+                          className="input-field pl-10" 
+                          placeholder="000.000.000-00" 
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={handleSearchCpf}
-                    disabled={searchLoading || !searchCpf}
-                    className="btn-primary whitespace-nowrap"
-                  >
-                    {searchLoading ? 'Buscando...' : 'Buscar Autor'}
-                  </button>
-                </div>
-
-                {searchError && (
-                  <p className="text-red-500 text-sm mt-2 font-medium">{searchError}</p>
-                )}
-
-                {searchResult && (
-                  <div className="mt-6 p-4 border border-primary/30 bg-primary/5 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div>
-                      <h4 className="font-bold text-on-surface">{searchResult.nome}</h4>
-                      <p className="text-sm text-on-surface-variant">CPF: {searchResult.cpf}</p>
-                    </div>
-                    <button type="button" onClick={handleAddAuthor} className="btn-secondary text-sm py-2 flex items-center gap-2">
-                      <Plus className="w-4 h-4" /> Adicionar Autor
+                    <button 
+                      type="button" 
+                      onClick={handleSearchCpf}
+                      disabled={searchLoading || !searchCpf}
+                      className="btn-primary whitespace-nowrap"
+                    >
+                      {searchLoading ? 'Buscando...' : 'Buscar Autor'}
                     </button>
                   </div>
-                )}
-              </div>
+
+                  {searchError && (
+                    <p className="text-red-500 text-sm mt-2 font-medium">{searchError}</p>
+                  )}
+
+                  {searchResult && (
+                    <div className="mt-6 p-4 border border-primary/30 bg-primary/5 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                      <div>
+                        <h4 className="font-bold text-on-surface">{searchResult.nome}</h4>
+                        <p className="text-sm text-on-surface-variant">CPF: {searchResult.cpf}</p>
+                      </div>
+                      <button type="button" onClick={handleAddAuthor} className="btn-secondary text-sm py-2 flex items-center gap-2">
+                        <Plus className="w-4 h-4" /> Adicionar Autor
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {autores.map((autor, index) => (
@@ -290,7 +304,7 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                       <h4 className="font-bold text-on-surface text-sm">{autor.nome} {index === 0 && '(Você)'}</h4>
                       <p className="text-xs text-on-surface-variant">{autor.papel} • {autor.email_inst || autor.cpf}</p>
                     </div>
-                    {index > 0 && (
+                    {!readOnly && index > 0 && (
                       <button type="button" onClick={() => setAutores(autores.filter((_, i) => i !== index))} className="text-on-surface-variant hover:text-red-500">
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -317,19 +331,21 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                   <h4 className="font-bold text-lg text-on-surface mb-2">Artigo Submetido (PDF)</h4>
                   <p className="text-sm text-on-surface-variant mb-6">Versão final do artigo para revisão técnica e publicação.</p>
                   
-                  <label className="btn-secondary cursor-pointer flex items-center gap-2">
-                    <Upload className="w-4 h-4" /> Procurar no computador
-                    <input
-                      type="file"
-                      onChange={(e) => handleFileChange(e, 'artigo')}
-                      accept=".pdf"
-                      className="hidden"
-                      required
-                    />
-                  </label>
-                  {files.artigo && (
+                  {!readOnly && (
+                    <label className="btn-secondary cursor-pointer flex items-center gap-2">
+                      <Upload className="w-4 h-4" /> Procurar no computador
+                      <input
+                        type="file"
+                        onChange={(e) => handleFileChange(e, 'artigo')}
+                        accept=".pdf"
+                        className="hidden"
+                        required
+                      />
+                    </label>
+                  )}
+                  {(files.artigo || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).artigo)) && (
                     <div className="mt-4 flex items-center gap-2 text-sm text-green-600 font-bold bg-green-50 px-4 py-2 rounded-full">
-                      <Check className="w-4 h-4" /> {files.artigo.name}
+                      <Check className="w-4 h-4" /> {files.artigo?.name || 'artigo.pdf'}
                     </div>
                   )}
                 </div>
@@ -346,11 +362,17 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                       <p className="text-xs text-on-surface-variant">Máx. 500 palavras</p>
                     </div>
                   </div>
-                  <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
-                    {files.resumo ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
-                    {!files.resumo && <ArrowRight className="w-4 h-4" />}
-                    <input type="file" onChange={(e) => handleFileChange(e, 'resumo')} accept=".pdf,.doc,.docx" className="hidden" />
-                  </label>
+                  {!readOnly ? (
+                    <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
+                      {files.resumo ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
+                      {!files.resumo && <ArrowRight className="w-4 h-4" />}
+                      <input type="file" onChange={(e) => handleFileChange(e, 'resumo')} accept=".pdf,.doc,.docx" className="hidden" />
+                    </label>
+                  ) : (
+                    <div className="text-primary text-sm font-bold flex items-center justify-between">
+                      {(files.resumo || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).resumo)) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
+                    </div>
+                  )}
                 </div>
 
                 <div className="border border-gray-200 rounded-xl p-6 bg-white hover:shadow-md transition-shadow">
@@ -363,11 +385,17 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                       <p className="text-xs text-on-surface-variant">Documento institucional</p>
                     </div>
                   </div>
-                  <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
-                    {files.aceite ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
-                    {!files.aceite && <ArrowRight className="w-4 h-4" />}
-                    <input type="file" onChange={(e) => handleFileChange(e, 'aceite')} accept=".pdf" className="hidden" />
-                  </label>
+                  {!readOnly ? (
+                    <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
+                      {files.aceite ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
+                      {!files.aceite && <ArrowRight className="w-4 h-4" />}
+                      <input type="file" onChange={(e) => handleFileChange(e, 'aceite')} accept=".pdf" className="hidden" />
+                    </label>
+                  ) : (
+                    <div className="text-primary text-sm font-bold flex items-center justify-between">
+                      {(files.aceite || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).aceite)) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -397,14 +425,16 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
                 <ArrowLeft className="w-4 h-4" /> Anterior
               </button>
             )}
-            <button 
-              type="button" 
-              onClick={(e) => handleSubmit(e, true)} 
-              disabled={loading}
-              className="btn-secondary flex items-center gap-2 bg-surface-container-low text-on-surface-variant border-none"
-            >
-              Salvar Rascunho
-            </button>
+            {!readOnly && (
+              <button 
+                type="button" 
+                onClick={(e) => handleSubmit(e, true)} 
+                disabled={loading}
+                className="btn-secondary flex items-center gap-2 bg-surface-container-low text-on-surface-variant border-none"
+              >
+                Salvar Rascunho
+              </button>
+            )}
           </div>
           
           {currentStep < STEPS.length - 1 ? (
@@ -412,18 +442,20 @@ export default function FomentoPublicacao({ onBack, initialData }: { onBack: () 
               Próximo Passo <ArrowRight className="w-4 h-4" />
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={(e) => handleSubmit(e, false)}
-              disabled={loading}
-              className="btn-primary flex items-center gap-2"
-            >
-              {loading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              ) : (
-                <>Finalizar Submissão <Check className="w-4 h-4" /></>
-              )}
-            </button>
+            !readOnly && (
+              <button
+                type="button"
+                onClick={(e) => handleSubmit(e, false)}
+                disabled={loading}
+                className="btn-primary flex items-center gap-2"
+              >
+                {loading ? (
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                ) : (
+                  <>Finalizar Submissão <Check className="w-4 h-4" /></>
+                )}
+              </button>
+            )
           )}
         </div>
       </form>

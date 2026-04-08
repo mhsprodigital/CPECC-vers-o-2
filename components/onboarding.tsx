@@ -3,15 +3,18 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { Check, ChevronRight, ChevronLeft, Upload } from 'lucide-react';
-import { mockUploadFile } from '@/lib/local-storage';
 import { formatCPF, formatPhone, formatCEP } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
+import { uploadToGoogleDrive } from '@/lib/google-drive';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 const STEPS = [
   'Dados Pessoais',
   'Dados Institucionais',
   'Formação Acadêmica',
   'Características Sociodemográficas',
+  'Dados Bancários',
   'Documentação Comprobatória',
 ];
 
@@ -44,10 +47,11 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
   const calculateProgress = () => {
     const requiredFields = [
-      'nome', 'cpf', 'data_nascimento', 'email_inst', 'email_pessoal', 'telefone', 'cep', 'logradouro', 'cidade', 'uf',
+      'nome', 'cpf', 'data_nascimento', 'email_inst', 'email_pessoal', 'telefone', 'cep', 'logradouro', 'numero', 'bairro', 'cidade', 'uf',
       'vinculo', 'matricula', 'carga_horaria', 'regional', 'lotacao', 'tipo_unidade', 'setor', 'endereco_sei', 'cep_inst', 'endereco_inst',
       'graduacao', 'titulacao', 'area', 'lattes',
-      'genero', 'raca', 'ensino_medio', 'beneficiario', 'pcd'
+      'genero', 'raca', 'ensino_medio', 'beneficiario', 'pcd',
+      'banco', 'agencia', 'conta', 'tipo_conta'
     ];
     let filled = 0;
     requiredFields.forEach(field => {
@@ -143,7 +147,12 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       // Upload files
       const uploadedDocs: Record<string, string> = {};
       for (const [key, file] of Object.entries(files)) {
-        const url = await mockUploadFile(file);
+        const url = await uploadToGoogleDrive(
+          file,
+          formData.nome || user.user_metadata?.full_name || 'Pesquisador',
+          formData.cpf || 'Sem_CPF',
+          GOOGLE_DRIVE_SCRIPT_URL
+        );
         uploadedDocs[key] = url;
       }
 
@@ -285,6 +294,14 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
                 <div className="md:col-span-2">
                   <label className="label-text">Logradouro</label>
                   <input type="text" name="logradouro" value={formData.logradouro || ''} onChange={handleInputChange} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label-text">Número</label>
+                  <input type="text" name="numero" value={formData.numero || ''} onChange={handleInputChange} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label-text">Bairro</label>
+                  <input type="text" name="bairro" value={formData.bairro || ''} onChange={handleInputChange} className="input-field" required />
                 </div>
                 <div>
                   <label className="label-text">Cidade</label>
@@ -534,6 +551,35 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
           )}
 
           {currentStep === 4 && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+              <h2 className="text-xl font-bold text-primary border-l-4 border-primary pl-3">Dados Bancários</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="label-text">Banco</label>
+                  <input type="text" name="banco" value={formData.banco || ''} onChange={handleInputChange} className="input-field" required placeholder="Ex: Banco do Brasil" />
+                </div>
+                <div>
+                  <label className="label-text">Agência</label>
+                  <input type="text" name="agencia" value={formData.agencia || ''} onChange={handleInputChange} className="input-field" required placeholder="Ex: 0000-0" />
+                </div>
+                <div>
+                  <label className="label-text">Conta</label>
+                  <input type="text" name="conta" value={formData.conta || ''} onChange={handleInputChange} className="input-field" required placeholder="Ex: 00000-0" />
+                </div>
+                <div>
+                  <label className="label-text">Tipo de Conta</label>
+                  <select name="tipo_conta" value={formData.tipo_conta || ''} onChange={handleInputChange} className="input-field" required>
+                    <option value="">Selecione...</option>
+                    <option value="Corrente">Corrente</option>
+                    <option value="Poupança">Poupança</option>
+                    <option value="Salário">Salário</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentStep === 5 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
               <h2 className="text-xl font-bold text-primary border-l-4 border-primary pl-3">Documentação Comprobatória</h2>
               <p className="text-sm text-tertiary mb-6">
