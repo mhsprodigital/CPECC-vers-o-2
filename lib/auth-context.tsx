@@ -30,6 +30,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [adminUser, setAdminUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [adminsList, setAdminsList] = useState<any[]>([]);
 
   useEffect(() => {
     // Check local storage for admin session
@@ -41,6 +42,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
     
     checkAdminSession();
+
+    // Fetch admins from Supabase for login validation
+    const fetchAdmins = async () => {
+      try {
+        const { data } = await supabase.from('projects').select('*').eq('id', 'system_config_admins').single();
+        if (data && data.raw_data?.admins) {
+          setAdminsList(data.raw_data.admins);
+        }
+      } catch (e) {
+        console.error('Error fetching admins for login:', e);
+      }
+    };
+    fetchAdmins();
 
     // Supabase Auth Listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -90,7 +104,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const loginAdmin = (username: string, pass: string) => {
-    const admins = JSON.parse(localStorage.getItem('admins') || '[]');
+    const admins = adminsList.length > 0 ? adminsList : JSON.parse(localStorage.getItem('admins') || '[]');
     const admin = admins.find((a: any) => a.username === username && a.password === pass);
     if (admin) {
       setAdminUser(admin);

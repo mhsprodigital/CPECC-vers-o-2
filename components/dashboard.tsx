@@ -2,18 +2,18 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { FileText, Plus, LogOut, User as UserIcon, BookOpen, GraduationCap, Clock, ArrowLeft, AlertCircle } from 'lucide-react';
-import Image from 'next/image';
+import { FileText, Plus, LogOut, User as UserIcon, BookOpen, GraduationCap, Clock, ArrowLeft, AlertCircle, Home, X, Bell } from 'lucide-react';
 import FomentoPesquisa from './fomento-pesquisa';
 import FomentoPublicacao from './fomento-publicacao';
 import ProgressBar from './progress-bar';
 import Onboarding from './onboarding';
 import AcompanhamentoPublicacao from './acompanhamento-publicacao';
 import DossieProjeto from './dossie-projeto';
+import Picite from './picite';
 import { getFromLocal, getOneFromLocal, seedMockData } from '@/lib/local-storage';
 import { supabase } from '@/lib/supabase';
 
-type ViewState = 'dashboard' | 'fomento-pesquisa' | 'fomento-publicacao' | 'profile' | 'acompanhamento-publicacao' | 'dossie-projeto';
+type ViewState = 'dashboard' | 'fomento-pesquisa' | 'fomento-publicacao' | 'profile' | 'acompanhamento-publicacao' | 'dossie-projeto' | 'picite';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -23,6 +23,15 @@ export default function Dashboard() {
   const [selectedProject, setSelectedProject] = useState<any>(null);
   const [projectToCancel, setProjectToCancel] = useState<string | null>(null);
   const [projectDetailsModal, setProjectDetailsModal] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (projectDetailsModal) {
+      const updatedProject = projects.find(p => p.id === projectDetailsModal.id);
+      if (updatedProject && updatedProject.status !== projectDetailsModal.status) {
+        setProjectDetailsModal(updatedProject);
+      }
+    }
+  }, [projects, projectDetailsModal]);
   const [readOnlyProject, setReadOnlyProject] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
@@ -64,8 +73,8 @@ export default function Dashboard() {
         if (profileError && profileError.code !== 'PGRST116') {
           console.error('Error fetching profile:', profileError);
         } else if (profileData) {
-          // Merge raw_data with top level fields for compatibility
-          setProfile({ ...profileData, ...profileData.raw_data });
+          // Merge raw_data with top level fields for compatibility, prioritizing top-level fields
+          setProfile({ ...profileData.raw_data, ...profileData });
         }
 
         // Fetch projects from Supabase
@@ -79,12 +88,12 @@ export default function Dashboard() {
           console.error('Error fetching projects:', projectsError);
         } else if (projectsData) {
           const formattedProjects = projectsData.map(p => ({
+            ...p.raw_data,
             id: p.id,
             type: p.type === 'fomento_pesquisa' ? 'Fomento à Pesquisa' : p.type === 'fomento_publicacao' ? 'Fomento para Publicação' : 'PICITE',
             status: p.status,
             createdAt: p.created_at,
-            raw_data: p.raw_data,
-            ...p.raw_data
+            raw_data: p.raw_data
           }));
           setProjects(formattedProjects);
         }
@@ -120,6 +129,66 @@ export default function Dashboard() {
     };
   }, [user, currentView]); // Refetch when view changes back to dashboard
 
+  const [showMessages, setShowMessages] = useState(false);
+  const [newMessage, setNewMessage] = useState('');
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !profile) return;
+
+    const messageObj = {
+      id: Date.now().toString(),
+      from: 'Pesquisador',
+      text: newMessage,
+      date: new Date().toISOString(),
+      read: false
+    };
+
+    const updatedMessages = [...(profile.mensagens || []), messageObj];
+    const updatedRawData = { ...profile.raw_data, mensagens: updatedMessages };
+
+    try {
+      const { error } = await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', profile.id);
+      if (error) throw error;
+      setProfile({ ...profile, raw_data: updatedRawData, mensagens: updatedMessages });
+      setNewMessage('');
+    } catch (err) {
+      console.error('Error sending message:', err);
+      showToast('Erro ao enviar mensagem.', 'error');
+    }
+  };
+
+  const markMessagesAsRead = async () => {
+    if (!profile || !profile.mensagens) return;
+    
+    let hasUnread = false;
+    const updatedMessages = profile.mensagens.map((m: any) => {
+      if (m.from === 'CPECC' && !m.read) {
+        hasUnread = true;
+        return { ...m, read: true };
+      }
+      return m;
+    });
+
+    if (hasUnread) {
+      const updatedRawData = { ...profile.raw_data, mensagens: updatedMessages };
+      try {
+        await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', profile.id);
+        setProfile({ ...profile, raw_data: updatedRawData, mensagens: updatedMessages });
+      } catch (err) {
+        console.error('Error marking messages as read:', err);
+      }
+    }
+  };
+
+  const unreadCount = profile?.mensagens?.filter((m: any) => m.from === 'CPECC' && !m.read).length || 0;
+
+  useEffect(() => {
+    if (showMessages) {
+      markMessagesAsRead();
+    }
+  }, [showMessages]);
+
   const renderContent = () => {
     switch (currentView) {
       case 'fomento-pesquisa':
@@ -139,6 +208,8 @@ export default function Dashboard() {
         return <DossieProjeto project={selectedProject} onBack={() => setCurrentView('dashboard')} />;
       case 'acompanhamento-publicacao':
         return <AcompanhamentoPublicacao project={selectedProject} onBack={() => setCurrentView('dashboard')} />;
+      case 'picite':
+        return <Picite onBack={() => { setCurrentView('dashboard'); setReadOnlyProject(false); }} initialData={selectedProject} readOnly={readOnlyProject} />;
       case 'dashboard':
       default:
         return (
@@ -153,32 +224,33 @@ export default function Dashboard() {
                     {profile?.email_inst}
                   </span>
                   <span className={`text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full ${
-                    profile?.status === 'Ativo' ? 'bg-green-100 text-green-800' : profile?.status === 'Rejeitado' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'
+                    profile?.status === 'Ativo' ? 'bg-success/20 text-success-dark' : 
+                    (profile?.status === 'Rejeitado' || profile?.status === 'Pendência' || profile?.status === 'Pendente') ? 'bg-warning/20 text-warning-dark' : 
+                    profile?.status === 'Em Análise' ? 'bg-blue-100 text-blue-800' :
+                    'bg-error/20 text-error-dark'
                   }`}>
                     {profile?.status || 'Pendente'}
                   </span>
                 </div>
-                {profile?.status === 'Rejeitado' && profile?.rejection_message && (
-                  <div className="mt-3 p-3 bg-error/10 border border-error/20 rounded-lg text-sm text-error flex items-start gap-2 max-w-md">
-                    <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                    <div>
-                      <strong>Atenção:</strong> Seu perfil ou documentos foram rejeitados.
-                      <p className="mt-1">{profile.rejection_message}</p>
-                      <button onClick={() => setCurrentView('profile')} className="mt-2 underline font-bold">Atualizar Perfil</button>
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="flex items-center gap-4">
-                <button className="w-10 h-10 rounded-full bg-surface-container-low flex items-center justify-center text-primary hover:bg-surface-container transition-colors">
+                <button 
+                  onClick={() => setShowMessages(true)}
+                  className="w-10 h-10 rounded-full bg-surface-container-low flex items-center justify-center text-primary hover:bg-surface-container transition-colors relative"
+                >
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute top-0 right-0 w-4 h-4 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                      {unreadCount}
+                    </span>
+                  )}
                 </button>
                 <button className="w-10 h-10 rounded-full bg-surface-container-low flex items-center justify-center text-primary hover:bg-surface-container transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>
                 </button>
                 <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 overflow-hidden flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all relative" onClick={() => setCurrentView('profile')}>
                   {profile?.foto_perfil && !profile.foto_perfil.startsWith('https://mock-storage.local') ? (
-                    <Image src={profile.foto_perfil} alt="Perfil" fill className="object-cover" referrerPolicy="no-referrer" />
+                    <img src={profile.foto_perfil.replace(/\/file\/d\/(.+?)\/view.*/, '/uc?export=view&id=$1')} alt="Perfil" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <UserIcon className="w-6 h-6 text-primary" />
                   )}
@@ -186,10 +258,49 @@ export default function Dashboard() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+            {/* Unread Messages Banner */}
+            {unreadCount > 0 && (
+              <div className="mb-6 p-4 bg-error/10 border border-error/20 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-4">
+                <Bell className="w-6 h-6 text-error shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-error-dark font-bold text-lg">Você tem novas mensagens do CPECC</h3>
+                  <p className="text-error-dark/80 text-sm mt-1">
+                    Existem atualizações ou pendências importantes que exigem sua atenção.
+                  </p>
+                  <button 
+                    onClick={() => setShowMessages(true)}
+                    className="mt-3 px-4 py-2 bg-error text-white text-sm font-bold rounded-lg hover:bg-error-dark transition-colors"
+                  >
+                    Ler Mensagens
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Profile Pendencies Banner */}
+            {(profile?.status === 'Rejeitado' || profile?.status === 'Pendência') && profile?.rejection_message && (
+              <div className="mb-8 p-4 bg-warning/10 border border-warning/30 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-4">
+                <AlertCircle className="w-6 h-6 text-warning-dark shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-warning-dark font-bold text-lg">Seu cadastro possui pendências</h3>
+                  <p className="text-warning-dark/80 text-sm mt-1">
+                    {profile.rejection_message}
+                  </p>
+                  <button 
+                    onClick={() => setCurrentView('profile')} 
+                    className="mt-3 px-4 py-2 bg-warning text-warning-dark text-sm font-bold rounded-lg hover:bg-warning/20 transition-colors border border-warning/30"
+                  >
+                    Corrigir Cadastro
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
               <button 
                 onClick={() => {
                   setSelectedProject(null);
+                  setReadOnlyProject(false);
                   setCurrentView('fomento-pesquisa');
                 }}
                 className="bento-card flex flex-col items-start text-left group hover:border-primary/30"
@@ -204,6 +315,7 @@ export default function Dashboard() {
               <button 
                 onClick={() => {
                   setSelectedProject(null);
+                  setReadOnlyProject(false);
                   setCurrentView('fomento-publicacao');
                 }}
                 className="bento-card flex flex-col items-start text-left group hover:border-primary/30"
@@ -213,6 +325,21 @@ export default function Dashboard() {
                 </div>
                 <h3 className="text-lg font-bold text-on-surface mb-2">Fomento para Publicação</h3>
                 <p className="text-sm text-on-surface-variant">Solicitação de custeio de taxas de publicação (APC).</p>
+              </button>
+
+              <button 
+                onClick={() => {
+                  setSelectedProject(null);
+                  setReadOnlyProject(false);
+                  setCurrentView('picite');
+                }}
+                className="bento-card flex flex-col items-start text-left group hover:border-primary/30"
+              >
+                <div className="w-12 h-12 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <GraduationCap className="w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-bold text-on-surface mb-2">PICITE</h3>
+                <p className="text-sm text-on-surface-variant">Cadastro de alunos e projetos de iniciação científica.</p>
               </button>
             </div>
 
@@ -271,10 +398,10 @@ export default function Dashboard() {
                             <Clock className="w-3 h-3" />
                             {new Date(proj.createdAt).toLocaleDateString('pt-BR')}
                           </div>
-                          {proj.status === 'Rejeitado' && proj.rejection_message && (
+                          {(proj.status === 'Rejeitado' || proj.status === 'Pendência') && proj.rejection_message && (
                             <div className="mt-2 p-2 bg-error/10 border border-error/20 rounded text-xs text-error flex items-start gap-1">
                               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                              <span><strong>Motivo da rejeição:</strong> {proj.rejection_message}</span>
+                              <span><strong>Atenção:</strong> {proj.rejection_message}</span>
                             </div>
                           )}
                         </div>
@@ -360,11 +487,20 @@ export default function Dashboard() {
               currentView === 'dashboard' ? 'bg-primary/5 text-primary font-bold' : 'text-on-surface-variant hover:bg-surface-container-low'
             }`}
           >
+            <Home className="w-5 h-5" /> Início (Home)
+          </button>
+          <button 
+            onClick={() => setCurrentView('dashboard')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium transition-colors ${
+              currentView === 'dashboard' ? 'bg-primary/5 text-primary font-bold' : 'text-on-surface-variant hover:bg-surface-container-low'
+            }`}
+          >
             <FileText className="w-5 h-5" /> Meus Projetos
           </button>
           <button 
             onClick={() => {
               setSelectedProject(null);
+              setReadOnlyProject(false);
               setCurrentView('fomento-pesquisa');
             }}
             className={`flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium transition-colors ${
@@ -522,7 +658,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
                       projectDetailsModal.status === 'Aprovado' ? 'bg-green-100 text-green-800' :
-                      projectDetailsModal.status === 'Rejeitado' ? 'bg-red-100 text-red-800' :
+                      (projectDetailsModal.status === 'Rejeitado' || projectDetailsModal.status === 'Pendência') ? 'bg-red-100 text-red-800' :
                       projectDetailsModal.status === 'Cancelado pelo Pesquisador' ? 'bg-red-100 text-red-800' :
                       projectDetailsModal.status === 'Rascunho' ? 'bg-gray-100 text-gray-800' :
                       'bg-blue-100 text-blue-800'
@@ -530,11 +666,11 @@ export default function Dashboard() {
                       {projectDetailsModal.status}
                     </span>
                   </div>
-                  {projectDetailsModal.status === 'Rejeitado' && projectDetailsModal.rejection_message && (
+                  {(projectDetailsModal.status === 'Rejeitado' || projectDetailsModal.status === 'Pendência') && projectDetailsModal.rejection_message && (
                     <div className="mt-3 p-3 bg-error/10 border border-error/20 rounded text-sm text-error flex items-start gap-2">
                       <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
                       <div>
-                        <strong>Motivo da rejeição:</strong>
+                        <strong>Motivo da {projectDetailsModal.status === 'Pendência' ? 'pendência' : 'rejeição'}:</strong>
                         <p className="mt-1">{projectDetailsModal.rejection_message}</p>
                       </div>
                     </div>
@@ -568,7 +704,7 @@ export default function Dashboard() {
                         setCurrentView('fomento-pesquisa');
                       } else if (projectDetailsModal.type === 'PICITE') {
                         setSelectedProject(projectDetailsModal);
-                        setCurrentView('fomento-pesquisa'); // Assuming PICITE uses the same form or needs a different one
+                        setCurrentView('picite');
                       }
                       setProjectDetailsModal(null);
                     }}
@@ -584,6 +720,8 @@ export default function Dashboard() {
                         setReadOnlyProject(true);
                         if (projectDetailsModal.type === 'Fomento para Publicação') {
                           setCurrentView('fomento-publicacao');
+                        } else if (projectDetailsModal.type === 'PICITE') {
+                          setCurrentView('picite');
                         } else {
                           setCurrentView('fomento-pesquisa');
                         }
@@ -630,6 +768,67 @@ export default function Dashboard() {
         )}
 
       </main>
+      {showMessages && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+            <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+              <h2 className="text-xl font-bold text-primary flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                Mensagens e Notificações
+              </h2>
+              <button onClick={() => setShowMessages(false)} className="text-on-surface-variant hover:text-primary">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-surface-container-lowest">
+              {(!profile?.mensagens || profile.mensagens.length === 0) ? (
+                <div className="text-center text-on-surface-variant py-8">
+                  Nenhuma mensagem no momento.
+                </div>
+              ) : (
+                profile.mensagens.map((msg: any) => (
+                  <div key={msg.id} className={`flex flex-col ${msg.from === 'Pesquisador' ? 'items-end' : 'items-start'}`}>
+                    <div className={`max-w-[80%] p-4 rounded-2xl ${
+                      msg.from === 'Pesquisador' 
+                        ? 'bg-primary text-on-primary rounded-tr-sm' 
+                        : 'bg-surface-container-high text-on-surface rounded-tl-sm'
+                    }`}>
+                      <div className="text-xs opacity-70 mb-1 font-bold">
+                        {msg.from === 'CPECC' ? 'CPECC / Admin' : 'Você'}
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    </div>
+                    <span className="text-[10px] text-on-surface-variant mt-1">
+                      {new Date(msg.date).toLocaleString('pt-BR')}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-4 border-t border-outline-variant bg-surface">
+              <form onSubmit={handleSendMessage} className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Digite sua mensagem para a CPECC..."
+                  className="input-field flex-1"
+                />
+                <button 
+                  type="submit" 
+                  disabled={!newMessage.trim()}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  Enviar
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

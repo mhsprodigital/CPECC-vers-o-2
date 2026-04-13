@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { Check, ChevronRight, ChevronLeft, Upload } from 'lucide-react';
+import { Check, ChevronRight, ChevronLeft, Upload, Home } from 'lucide-react';
 import { formatCPF, formatPhone, formatCEP } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
 import { uploadToGoogleDrive } from '@/lib/google-drive';
@@ -83,10 +83,17 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       uploadedDocs = initialData?.documentos_json ? JSON.parse(initialData.documentos_json) : {};
     } catch (e) {}
 
-    if (uploadedDocs[docId]) {
-      // Mocking a pending status for demonstration
-      if (docId === 'doc_rg' && initialData?.status === 'Pendente') {
-        return { label: 'Inconsistência', color: 'bg-red-100 text-red-800' };
+    // Check both in documentos_json and top-level fields
+    const hasDoc = uploadedDocs[docId] || initialData?.[docId];
+
+    if (hasDoc) {
+      const docStatuses = initialData?.document_statuses || {};
+      const statusInfo = docStatuses[docId];
+
+      if (statusInfo?.status === 'Rejeitado') {
+        return { label: 'Inconsistência', color: 'bg-red-100 text-red-800', message: statusInfo.message };
+      } else if (statusInfo?.status === 'Aprovado') {
+        return { label: 'Aprovado', color: 'bg-green-100 text-green-800' };
       }
       return { label: 'Em Análise', color: 'bg-yellow-100 text-yellow-800' };
     }
@@ -156,17 +163,37 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
         uploadedDocs[key] = url;
       }
 
+      // Merge with existing docs
+      let existingDocs = {};
+      try {
+        existingDocs = initialData?.documentos_json ? JSON.parse(initialData.documentos_json) : {};
+      } catch(e) {}
+      
+      const mergedDocs = { ...existingDocs, ...uploadedDocs };
+
       // Save profile to Supabase
+      // Fetch latest data to prevent overwriting messages or other admin updates
+      const { data: latestData } = await supabase.from('researchers').select('raw_data, status').eq('id', user.id).single();
+      const currentRawData = latestData?.raw_data || initialData || {};
+      const currentStatus = latestData?.status || initialData?.status || 'Ativo';
+
+      // Clear document statuses for newly uploaded documents
+      const documentStatuses = { ...(currentRawData.document_statuses || {}) };
+      for (const key of Object.keys(uploadedDocs)) {
+        delete documentStatuses[key];
+      }
+
       const rawData = {
-        ...initialData,
+        ...currentRawData,
         ...formData,
         historico_formacao: historicoFormacao,
-        foto_perfil: uploadedDocs['foto_perfil'] || initialData?.foto_perfil,
-        documentos_json: Object.keys(uploadedDocs).length > 0 ? JSON.stringify(uploadedDocs) : initialData?.documentos_json,
+        foto_perfil: uploadedDocs['foto_perfil'] || currentRawData?.foto_perfil,
+        documentos_json: Object.keys(mergedDocs).length > 0 ? JSON.stringify(mergedDocs) : currentRawData?.documentos_json,
+        document_statuses: documentStatuses
       };
 
       const hasNewDocs = Object.keys(uploadedDocs).length > 0;
-      const newStatus = hasNewDocs ? 'Pendente' : (initialData?.status || 'Ativo');
+      const newStatus = hasNewDocs ? 'Pendente' : currentStatus;
 
       const { error } = await supabase
         .from('researchers')
@@ -201,10 +228,20 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       )}
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">Perfil do Pesquisador</h1>
-          <p className="text-on-surface-variant mb-4">
-            Complete seu cadastro para acessar o portal.
-          </p>
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h1 className="text-3xl font-bold text-primary mb-2">Perfil do Pesquisador</h1>
+              <p className="text-on-surface-variant">
+                Complete seu cadastro para acessar o portal.
+              </p>
+            </div>
+            <button 
+              onClick={() => window.location.href = '/'}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Home className="w-4 h-4" /> Início
+            </button>
+          </div>
           
           <div className="bg-surface-container-low p-4 rounded-xl mb-6">
             <div className="flex justify-between items-center mb-2">
@@ -262,6 +299,14 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
                 <div>
                   <label className="label-text">Data de Nascimento</label>
                   <input type="date" name="nascimento" value={formData.nascimento || ''} onChange={handleInputChange} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label-text">RG</label>
+                  <input type="text" name="rg" value={formData.rg || ''} onChange={handleInputChange} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label-text">PIS/PASEP/NIT/NIS</label>
+                  <input type="text" name="pis_pasep" value={formData.pis_pasep || ''} onChange={handleInputChange} className="input-field" required />
                 </div>
                 
                 <div className="md:col-span-2 mt-4">
@@ -589,15 +634,15 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { id: 'doc_rg', label: 'Registro Geral (RG)' },
-                  { id: 'doc_cpf', label: 'Cadastro de Pessoa Física (CPF)' },
+                  { id: 'doc_cpf', label: 'Cadastro de pessoa Física (CPF)' },
                   { id: 'doc_civil', label: 'Registro Civil' },
                   { id: 'doc_eleitor', label: 'Título de Eleitor' },
-                  { id: 'doc_militar', label: 'Certificado de Quitação Militar' },
+                  { id: 'doc_militar', label: 'Certificado de Reservista Militar' },
                   { id: 'doc_residencia', label: 'Comprovante de Residência' },
-                  { id: 'doc_vacina', label: 'Comprovante de Vacinação' },
+                  { id: 'doc_vacina', label: 'Cartão de Vacinação' },
                   { id: 'doc_diploma', label: 'Diploma de Graduação' },
-                  { id: 'doc_hist_escolar', label: 'Histórico Escolar' },
-                  { id: 'doc_estrangeiro', label: 'Estrangeiros (RNM/PASSAPORTE)' },
+                  { id: 'doc_hist_escolar', label: 'Histórico escolar' },
+                  { id: 'doc_estrangeiro', label: 'Estrangeiros (RNM/Passaporte)' },
                   { id: 'doc_ingles', label: 'Comprovante de Proficiência em Inglês' },
                   { id: 'doc_vinculo', label: 'Comprovante de Vínculo Institucional' },
                 ].map((doc) => {
@@ -622,7 +667,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
                       </div>
                       {status.label === 'Inconsistência' && (
                         <p className="text-xs text-red-600 mt-1">
-                          Documento ilegível ou incorreto. Por favor, reenvie.
+                          {status.message || 'Documento ilegível ou incorreto. Por favor, reenvie.'}
                         </p>
                       )}
                     </div>

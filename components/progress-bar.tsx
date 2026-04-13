@@ -14,7 +14,11 @@ export default function ProgressBar({ status }: ProgressBarProps) {
       case 'Pendência':
         return { color: 'bg-yellow-500', width: 'w-3/4', text: 'Pendência' };
       case 'Aprovado':
-        return { color: 'bg-green-500', width: 'w-full', text: 'Aprovado' };
+      case 'Ativo':
+      case 'Em Execução':
+        return { color: 'bg-green-500', width: 'w-full', text: status };
+      case 'Rejeitado':
+        return { color: 'bg-red-500', width: 'w-full', text: 'Rejeitado' };
       default:
         return { color: 'bg-gray-200', width: 'w-0', text: status };
     }

@@ -23,12 +23,16 @@ import {
   Check,
   CheckCircle,
   Eye,
-  ExternalLink
+  ExternalLink,
+  Download
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { getFromLocal, saveToLocal, removeFromLocal } from '@/lib/local-storage';
 import { supabase } from '@/lib/supabase';
 
 type AdminTab = 'overview' | 'submissions' | 'publications' | 'accountability' | 'team' | 'researchers';
+
+const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
 export default function AdminDashboard() {
   const { adminUser, logout } = useAuth();
@@ -38,16 +42,51 @@ export default function AdminDashboard() {
   const [admins, setAdmins] = useState<any[]>([]);
   const [researchers, setResearchers] = useState<any[]>([]);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', role: 'gestor' });
+  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
   const [loading, setLoading] = useState(true);
   
   // New states for pending analysis modal
   const [allProjects, setAllProjects] = useState<any[]>([]);
   const [showPendingModal, setShowPendingModal] = useState(false);
+  const [adminNewMessage, setAdminNewMessage] = useState('');
+
+  const handleSendAdminMessage = async (researcherId: string) => {
+    if (!adminNewMessage.trim()) return;
+    
+    const researcher = researchers.find(r => r.id === researcherId);
+    if (!researcher) return;
+
+    const messageObj = {
+      id: Date.now().toString(),
+      from: 'CPECC',
+      text: adminNewMessage,
+      date: new Date().toISOString(),
+      read: false
+    };
+
+    const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
+    const updatedRawData = { ...researcher.raw_data, mensagens: updatedMessages };
+
+    try {
+      const { error } = await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', researcherId);
+      if (error) throw error;
+      setResearchers(prev => prev.map(r => r.id === researcherId ? { ...r, raw_data: updatedRawData } : r));
+      if (selectedResearcher?.id === researcherId) {
+        setSelectedResearcher((prev: any) => ({ ...prev, raw_data: updatedRawData }));
+      }
+      setAdminNewMessage('');
+      showToast('Mensagem enviada com sucesso.', 'success');
+    } catch (err) {
+      console.error('Error sending message:', err);
+      showToast('Erro ao enviar mensagem.', 'error');
+    }
+  };
   const [selectedDocument, setSelectedDocument] = useState<any | null>(null);
   const [selectedResearcher, setSelectedResearcher] = useState<any | null>(null);
   const [rejectionMessage, setRejectionMessage] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showIndividualDocRejectModal, setShowIndividualDocRejectModal] = useState(false);
+  const [docToRejectInfo, setDocToRejectInfo] = useState<{doc: any, name: string, url: string} | null>(null);
   const [allowCorrection, setAllowCorrection] = useState(true);
   
   // Accountability states
@@ -126,7 +165,19 @@ export default function AdminDashboard() {
         console.error('Error fetching data from Supabase:', error);
       }
       
-      setAdmins(JSON.parse(localStorage.getItem('admins') || '[]'));
+      // Load admins from Supabase (special project entry)
+      const { data: adminConfig } = await supabase.from('projects').select('*').eq('id', 'system_config_admins').single();
+      if (adminConfig && adminConfig.raw_data?.admins) {
+        setAdmins(adminConfig.raw_data.admins);
+      } else {
+        // Fallback to local storage or default
+        const localAdmins = JSON.parse(localStorage.getItem('admins') || '[]');
+        if (localAdmins.length > 0) {
+          setAdmins(localAdmins);
+        } else {
+          setAdmins([{ username: 'admin', role: 'Diretoria', nome: 'Administrador Geral', cargo: 'Diretor', matricula: '000000' }]);
+        }
+      }
       setLoading(false);
     };
     
@@ -153,20 +204,52 @@ export default function AdminDashboard() {
     };
   }, []);
 
-  const handleAddAdmin = (e: React.FormEvent) => {
+  const handleAddAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     const updatedAdmins = [...admins, { ...newAdmin, id: Date.now().toString() }];
     setAdmins(updatedAdmins);
-    localStorage.setItem('admins', JSON.stringify(updatedAdmins));
-    setNewAdmin({ username: '', password: '', role: 'gestor' });
-    setShowAddAdmin(false);
+    
+    try {
+      const { error } = await supabase.from('projects').upsert({
+        id: 'system_config_admins',
+        title: 'Configuração de Equipe',
+        status: 'System',
+        raw_data: { admins: updatedAdmins }
+      });
+      if (error) throw error;
+      
+      localStorage.setItem('admins', JSON.stringify(updatedAdmins));
+      setNewAdmin({ username: '', password: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
+      setShowAddAdmin(false);
+      showToast('Gestor adicionado com sucesso!', 'success');
+    } catch (error) {
+      console.error('Error saving team:', error);
+      showToast('Erro ao salvar equipe no banco de dados.', 'error');
+    }
   };
 
-  const removeAdmin = (id: string) => {
-    if (admins.find(a => a.id === id)?.username === 'admin') return; // Prevent deleting master admin
+  const removeAdmin = async (id: string) => {
+    const adminToRemove = admins.find(a => a.id === id);
+    if (adminToRemove?.username === 'admin') return; // Prevent deleting master admin
+    
     const updatedAdmins = admins.filter(a => a.id !== id);
     setAdmins(updatedAdmins);
-    localStorage.setItem('admins', JSON.stringify(updatedAdmins));
+    
+    try {
+      const { error } = await supabase.from('projects').upsert({
+        id: 'system_config_admins',
+        title: 'Configuração de Equipe',
+        status: 'System',
+        raw_data: { admins: updatedAdmins }
+      });
+      if (error) throw error;
+      
+      localStorage.setItem('admins', JSON.stringify(updatedAdmins));
+      showToast('Colaborador removido.', 'success');
+    } catch (error) {
+      console.error('Error removing team member:', error);
+      showToast('Erro ao remover colaborador do banco de dados.', 'error');
+    }
   };
 
   const handleUpdateResearcherStatus = async (id: string, newStatus: string) => {
@@ -187,6 +270,276 @@ export default function AdminDashboard() {
       console.error('Error updating researcher status:', error);
       showToast('Erro ao atualizar status do pesquisador.', 'error');
     }
+  };
+
+  const generateFullDossier = (projectId: string) => {
+    const project = allProjects.find(p => p.id === projectId);
+    const researcher = researchers.find(r => r.id === project?.author_id);
+    
+    if (!project || !researcher) {
+      showToast('Erro ao carregar dados para o dossiê.', 'error');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    let equipeHtml = '<p class="text-sm text-on-surface-variant italic">Nenhum membro da equipe cadastrado.</p>';
+    let cronogramaHtml = '<p class="text-sm text-on-surface-variant italic">Nenhum cronograma cadastrado.</p>';
+    let orcamentoHtml = '<p class="text-sm text-on-surface-variant italic">Nenhum orçamento cadastrado.</p>';
+    let autoresHtml = '';
+
+    try {
+      if (project.raw_data?.equipe_json) {
+        const equipe = JSON.parse(project.raw_data.equipe_json);
+        if (equipe && equipe.length > 0) {
+          equipeHtml = `
+            <table>
+              <thead>
+                <tr><th>Nome</th><th>Função</th><th>Titulação</th><th>Instituição</th></tr>
+              </thead>
+              <tbody>
+                ${equipe.map((m: any) => `<tr><td>${m.nome || 'N/A'}</td><td>${m.funcao || 'N/A'}</td><td>${m.titulacao || 'N/A'}</td><td>${m.instituicao || 'N/A'}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+      }
+      
+      if (project.raw_data?.cronograma_json) {
+        const cronograma = JSON.parse(project.raw_data.cronograma_json);
+        if (cronograma && cronograma.length > 0) {
+          cronogramaHtml = `
+            <table>
+              <thead>
+                <tr><th>Atividade</th><th>Início</th><th>Fim</th></tr>
+              </thead>
+              <tbody>
+                ${cronograma.map((c: any) => `<tr><td>${c.atividade || 'N/A'}</td><td>${c.inicio || 'N/A'}</td><td>${c.termino || 'N/A'}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+      }
+
+      if (project.raw_data?.orcamento_json) {
+        const orcamento = JSON.parse(project.raw_data.orcamento_json);
+        if (orcamento && orcamento.length > 0) {
+          orcamentoHtml = `
+            <table>
+              <thead>
+                <tr><th>Item</th><th>Categoria</th><th>Qtd</th><th>Valor Unit.</th><th>Total</th></tr>
+              </thead>
+              <tbody>
+                ${orcamento.map((o: any) => `<tr><td>${o.item || 'N/A'}</td><td>${o.categoria || 'N/A'}</td><td>${o.qtd || 1}</td><td>R$ ${o.valor?.toFixed(2) || '0,00'}</td><td>R$ ${(o.qtd * o.valor)?.toFixed(2) || '0,00'}</td></tr>`).join('')}
+              </tbody>
+              <tfoot>
+                <tr style="font-weight: bold; background: #f1f5f9;">
+                  <td colspan="4" style="text-align: right;">VALOR TOTAL SOLICITADO:</td>
+                  <td>R$ ${orcamento.reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0).toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          `;
+        }
+      }
+
+      if (project.type === 'fomento_publicacao' && project.raw_data?.autores_json) {
+        const autores = JSON.parse(project.raw_data.autores_json);
+        if (autores && autores.length > 0) {
+          autoresHtml = `
+            <div class="section">
+              <h2>Relatório de Autores da Publicação</h2>
+              <table>
+                <thead>
+                  <tr><th>Nome</th><th>Instituição</th><th>Tipo de Autoria</th></tr>
+                </thead>
+                <tbody>
+                  ${autores.map((m: any) => `<tr><td>${m.nome || 'N/A'}</td><td>${m.instituicao || 'N/A'}</td><td>${m.tipo || 'N/A'}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing project data for dossier:', e);
+    }
+
+    const docStatuses = project.raw_data?.document_statuses || {};
+    let docsHtml = '<p class="text-sm text-on-surface-variant italic">Nenhum status de documento registrado.</p>';
+    if (Object.keys(docStatuses).length > 0) {
+      docsHtml = `
+        <table>
+          <thead>
+            <tr><th>Documento</th><th>Status</th><th>Data da Análise</th><th>Assinatura Digital</th></tr>
+          </thead>
+          <tbody>
+            ${Object.entries(docStatuses).map(([name, info]: [string, any]) => `
+              <tr>
+                <td>${name}</td>
+                <td><span class="badge" style="background: ${info.status === 'Aprovado' ? '#dcfce7' : '#fee2e2'}; color: ${info.status === 'Aprovado' ? '#166534' : '#991b1b'};">${info.status}</span></td>
+                <td>${info.date ? new Date(info.date).toLocaleString('pt-BR') : 'N/A'}</td>
+                <td>${info.signature ? `<span style="font-size: 0.8em; color: #0369a1;">ID: ${info.signature.id}<br>Hash: ${info.signature.hash}</span>` : 'Pendente'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Dossiê Técnico-Científico - ${project.raw_data?.titulo || 'Projeto'}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap');
+            body { font-family: 'Inter', sans-serif; padding: 40px; line-height: 1.6; color: #1a202c; max-width: 1100px; margin: 0 auto; background: #f8fafc; }
+            h1 { font-family: 'Manrope', sans-serif; color: #003e6f; border-bottom: 4px solid #003e6f; padding-bottom: 12px; margin-bottom: 30px; text-align: center; font-size: 2.2em; }
+            h2 { font-family: 'Manrope', sans-serif; color: #006970; margin-top: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-size: 1.5em; }
+            h3 { font-family: 'Manrope', sans-serif; color: #4a5568; font-size: 1.2em; margin-top: 25px; border-left: 5px solid #006970; padding-left: 12px; background: #f1f5f9; padding-top: 8px; padding-bottom: 8px; }
+            .section { margin-bottom: 35px; background: #fff; padding: 30px; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+            .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
+            .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+            .label { font-weight: 700; color: #718096; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px; }
+            .value { margin-bottom: 18px; }
+            .value-text { display: block; color: #1a202c; font-weight: 500; font-size: 0.95em; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9em; background: white; }
+            th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: left; }
+            th { background-color: #f8fafc; color: #475569; font-weight: 700; text-transform: uppercase; font-size: 0.8em; }
+            .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.75em; font-weight: 700; }
+            .footer { margin-top: 60px; text-align: center; font-size: 0.85em; color: #94a3b8; border-top: 2px solid #e2e8f0; padding-top: 25px; }
+            .header-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; background: #003e6f; color: white; padding: 20px; border-radius: 12px; }
+            .logo-placeholder { font-family: 'Manrope', sans-serif; font-weight: 800; font-size: 1.5em; }
+            @media print {
+              body { padding: 0; background: white; }
+              button { display: none; }
+              .section { border: 1px solid #eee; box-shadow: none; break-inside: avoid; }
+              .header-info { background: #f1f5f9; color: #003e6f; border: 1px solid #003e6f; }
+            }
+          </style>
+        </head>
+        <body>
+          <div style="text-align: right; margin-bottom: 20px;">
+            <button onclick="window.print()" style="padding: 12px 28px; background: #003e6f; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(0, 62, 111, 0.3); transition: all 0.2s;">Imprimir Dossiê Completo</button>
+          </div>
+          
+          <div class="header-info">
+            <div class="logo-placeholder">CPECC / ESPDF</div>
+            <div style="text-align: right;">
+              <div style="font-weight: 700;">Dossiê Técnico-Científico</div>
+              <div style="font-size: 0.8em; opacity: 0.9;">ID do Projeto: ${project.id}</div>
+            </div>
+          </div>
+
+          <h1>Relatório Consolidado de Submissão</h1>
+          
+          <div class="section">
+            <h2>1. Identificação do Projeto</h2>
+            <div class="grid-2">
+              <div class="value" style="grid-column: span 2;"><span class="label">Título do Projeto</span><span class="value-text" style="font-size: 1.3em; font-weight: 800; color: #003e6f; line-height: 1.2;">${project.raw_data?.titulo || 'N/A'}</span></div>
+              <div class="value"><span class="label">Status Atual</span><span class="badge" style="background: #e0f2fe; color: #0369a1;">${project.status}</span></div>
+              <div class="value"><span class="label">Tipo de Fomento</span><span class="value-text" style="font-weight: 700;">${project.type === 'fomento_pesquisa' ? 'Fomento à Pesquisa' : project.type === 'fomento_publicacao' ? 'Fomento para Publicação' : 'PICITE'}</span></div>
+              <div class="value"><span class="label">Data de Submissão</span><span class="value-text">${new Date(project.created_at).toLocaleString('pt-BR')}</span></div>
+              <div class="value"><span class="label">Área de Conhecimento</span><span class="value-text">${project.raw_data?.area_tematica || 'N/A'}</span></div>
+            </div>
+            
+            <h3>Resumo da Proposta</h3>
+            <div class="value-text" style="text-align: justify; white-space: pre-wrap; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0;">${project.raw_data?.resumo || 'N/A'}</div>
+            
+            <h3>Metodologia e Objetivos</h3>
+            <div class="value-text" style="text-align: justify; white-space: pre-wrap; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0;">${project.raw_data?.metodologia || 'N/A'}</div>
+          </div>
+
+          ${project.type === 'fomento_publicacao' ? `
+            <div class="section">
+              <h2>2. Detalhes da Publicação</h2>
+              <div class="grid-3">
+                <div class="value"><span class="label">Revista Científica</span><span class="value-text">${project.raw_data?.revista || 'N/A'}</span></div>
+                <div class="value"><span class="label">Qualis</span><span class="value-text">${project.raw_data?.qualis || 'N/A'}</span></div>
+                <div class="value"><span class="label">Fator de Impacto</span><span class="value-text">${project.raw_data?.impacto || 'N/A'}</span></div>
+                <div class="value"><span class="label">Valor da APC</span><span class="value-text" style="color: #166534; font-weight: 700;">${project.raw_data?.valor_apc || 'N/A'}</span></div>
+              </div>
+              ${autoresHtml}
+            </div>
+          ` : ''}
+
+          <div class="section">
+            <h2>3. Planejamento e Recursos</h2>
+            <h3>Cronograma de Execução</h3>
+            ${cronogramaHtml}
+            
+            <h3>Orçamento e Justificativa de Gastos</h3>
+            ${orcamentoHtml}
+          </div>
+
+          <div class="section">
+            <h2>4. Equipe de Pesquisa</h2>
+            ${equipeHtml}
+          </div>
+
+          <div class="section">
+            <h2>5. Pesquisador Responsável (Proponente)</h2>
+            <div class="grid-3">
+              <div class="value"><span class="label">Nome Completo</span><span class="value-text" style="font-weight: 700;">${researcher.nome || 'N/A'}</span></div>
+              <div class="value"><span class="label">CPF</span><span class="value-text">${researcher.cpf || 'N/A'}</span></div>
+              <div class="value"><span class="label">RG</span><span class="value-text">${researcher.raw_data?.rg || 'N/A'}</span></div>
+              <div class="value"><span class="label">Data de Nascimento</span><span class="value-text">${researcher.raw_data?.nascimento ? new Date(researcher.raw_data.nascimento).toLocaleDateString('pt-BR') : 'N/A'}</span></div>
+              <div class="value"><span class="label">PIS/PASEP</span><span class="value-text">${researcher.raw_data?.pis_pasep || 'N/A'}</span></div>
+              <div class="value"><span class="label">E-mail Institucional</span><span class="value-text">${researcher.email_inst || 'N/A'}</span></div>
+              <div class="value"><span class="label">E-mail Pessoal</span><span class="value-text">${researcher.raw_data?.email_pess || 'N/A'}</span></div>
+              <div class="value"><span class="label">Telefone</span><span class="value-text">${researcher.raw_data?.telefone || 'N/A'}</span></div>
+              <div class="value"><span class="label">WhatsApp</span><span class="value-text">${researcher.raw_data?.whatsapp || 'N/A'}</span></div>
+              <div class="value"><span class="label">Titulação</span><span class="value-text">${researcher.titulacao || 'N/A'}</span></div>
+              <div class="value"><span class="label">Graduação</span><span class="value-text">${researcher.raw_data?.graduacao || 'N/A'}</span></div>
+              <div class="value"><span class="label">Área (CNPq)</span><span class="value-text">${researcher.raw_data?.area || 'N/A'}</span></div>
+              <div class="value"><span class="label">Vínculo</span><span class="value-text">${researcher.raw_data?.vinculo || 'N/A'}</span></div>
+              <div class="value"><span class="label">Matrícula</span><span class="value-text">${researcher.raw_data?.matricula || 'N/A'}</span></div>
+              <div class="value"><span class="label">Carga Horária</span><span class="value-text">${researcher.raw_data?.carga_horaria || '0'}h/sem</span></div>
+              <div class="value"><span class="label">Regional</span><span class="value-text">${researcher.raw_data?.regional || 'N/A'}</span></div>
+              <div class="value"><span class="label">Lotação</span><span class="value-text">${researcher.raw_data?.lotacao || 'N/A'}</span></div>
+              <div class="value"><span class="label">Setor</span><span class="value-text">${researcher.raw_data?.setor_lotacao || 'N/A'}</span></div>
+              <div class="value"><span class="label">Processo SEI</span><span class="value-text">${researcher.raw_data?.endereco_sei || 'N/A'}</span></div>
+              <div class="value"><span class="label">Lattes</span><span class="value-text">${researcher.lattes || 'N/A'}</span></div>
+              <div class="value"><span class="label">ORCID</span><span class="value-text">${researcher.raw_data?.orcid || 'N/A'}</span></div>
+            </div>
+            
+            <h3>Dados Sociodemográficos</h3>
+            <div class="grid-3">
+              <div class="value"><span class="label">Gênero</span><span class="value-text">${researcher.raw_data?.genero || 'N/A'}</span></div>
+              <div class="value"><span class="label">Raça/Cor</span><span class="value-text">${researcher.raw_data?.raca || 'N/A'}</span></div>
+              <div class="value"><span class="label">Ensino Médio</span><span class="value-text">${researcher.raw_data?.ensino_medio || 'N/A'}</span></div>
+              <div class="value"><span class="label">Beneficiário Social</span><span class="value-text">${researcher.raw_data?.beneficiario || 'Não'}</span></div>
+              <div class="value"><span class="label">PNE</span><span class="value-text">${researcher.raw_data?.pcd || 'Não'}</span></div>
+              <div class="value"><span class="label">Detalhe PNE</span><span class="value-text">${researcher.raw_data?.pcd_detalhe || 'N/A'}</span></div>
+            </div>
+
+            <h3>Endereço de Contato</h3>
+            <div class="value-text" style="background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0;">
+              ${researcher.raw_data?.logradouro || ''}, ${researcher.raw_data?.numero || ''} ${researcher.raw_data?.complemento ? `- ${researcher.raw_data.complemento}` : ''}<br>
+              ${researcher.raw_data?.bairro || ''} - ${researcher.raw_data?.cidade || ''}/${researcher.raw_data?.uf || ''} - CEP: ${researcher.raw_data?.cep || ''}
+            </div>
+            
+            <h3>Informações Bancárias para Fomento</h3>
+            <div class="value-text" style="background: #f0fdf4; padding: 12px; border-radius: 8px; border: 1px solid #bbf7d0; color: #166534; font-weight: 600;">
+              Banco: ${researcher.raw_data?.banco || 'N/A'} | Agência: ${researcher.raw_data?.agencia || 'N/A'} | Conta: ${researcher.raw_data?.conta || 'N/A'} (${researcher.raw_data?.tipo_conta || 'N/A'})
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>6. Auditoria de Documentos e Assinaturas</h2>
+            ${docsHtml}
+          </div>
+
+          <div class="footer">
+            Este dossiê é um documento oficial gerado pelo Sistema de Gestão de Pesquisa CPECC/ESPDF.<br>
+            Autenticado em: ${new Date().toLocaleString('pt-BR')} por ${adminUser?.nome || 'Gestor CPECC'}.<br>
+            <strong>Fundação de Ensino e Pesquisa em Ciências da Saúde - FEPECS | CNPJ: 00.394.700/0001-08</strong>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const updateStatus = async (collection: string, id: string, status: string) => {
@@ -219,12 +572,20 @@ export default function AdminDashboard() {
         const { error } = await supabase.from('researchers').update({ status: 'Ativo' }).eq('id', id);
         if (error) throw error;
         setResearchers(prev => prev.map(r => r.id === id ? { ...r, status: 'Ativo' } : r));
+        
+        if (selectedResearcher?.id === id) {
+          setSelectedResearcher((prev: any) => ({ ...prev, status: 'Ativo' }));
+        }
       } else {
         const { error } = await supabase.from('projects').update({ status: 'Aprovado' }).eq('id', id);
         if (error) throw error;
         setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setPublications(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
+        
+        if (selectedAccountabilityProject?.id === id) {
+          setSelectedAccountabilityProject((prev: any) => ({ ...prev, status: 'Aprovado' }));
+        }
       }
       setSelectedDocument(null);
       showToast('Documento aprovado com sucesso!', 'success');
@@ -268,21 +629,166 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleExportData = () => {
+    try {
+      showToast('Gerando planilha...', 'success');
+      
+      // 1. Researchers Sheet
+      const researchersData = researchers.map(r => {
+        const raw = r.raw_data || {};
+        const docs = raw.documentos_json ? JSON.parse(raw.documentos_json) : {};
+        
+        return {
+          'ID': r.id,
+          'Nome Completo': r.nome,
+          'CPF': r.cpf,
+          'Data de Nascimento': raw.nascimento || '',
+          'RG': raw.rg || '',
+          'PIS/PASEP/NIT/NIS': raw.pis_pasep || '',
+          'E-mail Institucional': r.email_inst,
+          'E-mail Pessoal': raw.email_pess || '',
+          'Telefone para contato': raw.telefone || '',
+          'WhatsApp': raw.whatsapp || '',
+          'CEP': raw.cep || '',
+          'Logradouro': raw.logradouro || '',
+          'Número': raw.numero || '',
+          'Complemento': raw.complemento || '',
+          'Bairro': raw.bairro || '',
+          'Cidade': raw.cidade || '',
+          'UF': raw.uf || '',
+          'Vínculo Empregatício': raw.vinculo || '',
+          'Matrícula': raw.matricula || '',
+          'Carga Horária para Pesquisa (h/sem)': raw.carga_horaria || '',
+          'Regional de Saúde': raw.regional || '',
+          'Lotação/Unidade': raw.lotacao || '',
+          'Tipo de Unidade de Saúde': raw.tipo_unidade_saude || '',
+          'Setor Específico de Lotação': raw.setor_lotacao || '',
+          'Endereço SEI (processo Oficial)': raw.endereco_sei || '',
+          'CEP da Instituição': raw.cep_inst || '',
+          'Endereço da Instituição': raw.endereco_inst || '',
+          'Graduação': raw.graduacao || '',
+          'Maior Titulação': r.titulacao || '',
+          'Área de Conhecimento (CNPq)': raw.area || '',
+          'Histórico de Formação': raw.historico_formacao_json ? JSON.parse(raw.historico_formacao_json).map((h:any) => `${h.instituicao} - ${h.titulo} (${h.nivel}) - ${h.conclusao}`).join(' | ') : '',
+          'Link do Currículo Lattes': raw.lattes || '',
+          'ORCID ID': raw.orcid || '',
+          'ORCID Link': raw.orcid_link || '',
+          'Gênero': raw.genero || '',
+          'Raça/cor': raw.raca || '',
+          'Instituição de conclusão do Ensino Médio': raw.ensino_medio || '',
+          'Beneficiário do Governo': raw.beneficiario || '',
+          'É portador de necessidades especiais': raw.pcd || '',
+          'Qual necessidade especial': raw.pcd_detalhe || '',
+          'Banco': raw.banco || '',
+          'Agência': raw.agencia || '',
+          'Conta': raw.conta || '',
+          'Tipo de Conta': raw.tipo_conta || '',
+          'Status': r.status,
+          'Data de Cadastro': r.created_at,
+          'Doc: Foto de Perfil': raw.foto_perfil || '',
+          'Doc: RG/CPF': raw.rg_cpf || '',
+          'Doc: Comprovante de Residência': raw.comprovante_residencia || '',
+          'Doc: Termo de Anuência': raw.termo_anuencia || '',
+          'Doc: Registro Geral (RG)': docs['doc_rg'] || '',
+          'Doc: Cadastro de pessoa Física (CPF)': docs['doc_cpf'] || '',
+          'Doc: Registro Civil': docs['doc_civil'] || '',
+          'Doc: Título de Eleitor': docs['doc_eleitor'] || '',
+          'Doc: Certificado de Reservista Militar': docs['doc_militar'] || '',
+          'Doc: Cartão de Vacinação': docs['doc_vacina'] || '',
+          'Doc: Diploma de Graduação': docs['doc_diploma'] || '',
+          'Doc: Histórico escolar': docs['doc_hist_escolar'] || '',
+          'Doc: Estrangeiros (RNM/Passaporte)': docs['doc_estrangeiro'] || '',
+          'Doc: Comprovante de Proficiência em Inglês': docs['doc_ingles'] || '',
+          'Doc: Comprovante de Vínculo Institucional': docs['doc_vinculo'] || ''
+        };
+      });
+
+      // 2. Projects Sheet
+      const projectsData = allProjects.map(p => {
+        const raw = p.raw_data || {};
+        return {
+          'ID': p.id,
+          'Título': raw.titulo || '',
+          'Tipo': p.type,
+          'Status': p.status,
+          'Autor ID': p.author_id,
+          'Data de Submissão': p.created_at,
+          'Resumo': raw.resumo || '',
+          'Metodologia': raw.metodologia || '',
+          'Objetivos': raw.objetivos || '',
+          'Justificativa': raw.justificativa || '',
+          'Valor Total': raw.orcamento_json ? JSON.parse(raw.orcamento_json).reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0) : 0,
+          'Cronograma': raw.cronograma_json ? JSON.parse(raw.cronograma_json).map((c:any) => `${c.atividade} (${c.inicio} a ${c.termino})`).join(' | ') : '',
+          'Equipe': raw.equipe_json ? JSON.parse(raw.equipe_json).map((e:any) => `${e.nome} - ${e.funcao}`).join(' | ') : '',
+          'Doc: Projeto Completo': raw.projeto_completo_url || '',
+          'Doc: Currículo Lattes': raw.curriculo_lattes_url || '',
+          'Doc: Termo de Compromisso': raw.termo_compromisso_url || '',
+          'Doc: Declaração de Anuência': raw.declaracao_anuencia_url || '',
+          'Doc: Plano de Trabalho': raw.plano_trabalho_url || ''
+        };
+      });
+
+      // Create Workbook
+      const wb = XLSX.utils.book_new();
+      
+      const wsResearchers = XLSX.utils.json_to_sheet(researchersData);
+      XLSX.utils.book_append_sheet(wb, wsResearchers, "Pesquisadores");
+      
+      const wsProjects = XLSX.utils.json_to_sheet(projectsData);
+      XLSX.utils.book_append_sheet(wb, wsProjects, "Projetos e Fomentos");
+
+      // Export
+      XLSX.writeFile(wb, `CPECC_Base_Dados_${new Date().toISOString().split('T')[0]}.xlsx`);
+      
+      showToast('Planilha baixada com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao exportar dados:', error);
+      showToast('Erro ao gerar planilha.', 'error');
+    }
+  };
+
   const handleRejectDocument = async (id: string, message: string, isResearcher: boolean = false, allowCorrection: boolean = true) => {
     try {
       const newStatus = allowCorrection ? 'Pendência' : 'Rejeitado';
       
+      const messageObj = {
+        id: Date.now().toString(),
+        from: 'CPECC',
+        text: `Aviso de Rejeição/Pendência: ${message}`,
+        date: new Date().toISOString(),
+        read: false
+      };
+
       if (isResearcher) {
         const researcher = researchers.find(r => r.id === id);
-        const updatedRawData = { ...researcher.raw_data, rejection_message: message, allow_correction: allowCorrection };
+        if (!researcher) throw new Error('Researcher not found');
+        
+        const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
+        const updatedRawData = { ...researcher.raw_data, rejection_message: message, allow_correction: allowCorrection, mensagens: updatedMessages };
+        
         const { error } = await supabase.from('researchers').update({ 
           status: newStatus,
           raw_data: updatedRawData
         }).eq('id', id);
         if (error) throw error;
         setResearchers(prev => prev.map(r => r.id === id ? { ...r, status: newStatus, raw_data: updatedRawData } : r));
+        
+        if (selectedResearcher?.id === id) {
+          setSelectedResearcher((prev: any) => ({ ...prev, status: newStatus, raw_data: updatedRawData }));
+        }
       } else {
         const project = allProjects.find(p => p.id === id);
+        if (!project) throw new Error('Project not found');
+
+        // Add message to researcher
+        const researcher = researchers.find(r => r.id === project.author_id);
+        if (researcher) {
+          const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
+          const updatedResearcherRawData = { ...researcher.raw_data, mensagens: updatedMessages };
+          await supabase.from('researchers').update({ raw_data: updatedResearcherRawData }).eq('id', researcher.id);
+          setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, raw_data: updatedResearcherRawData } : r));
+        }
+
         const updatedRawData = { ...project.raw_data, rejection_message: message, allow_correction: allowCorrection };
         const { error } = await supabase.from('projects').update({ 
           status: newStatus,
@@ -292,74 +798,349 @@ export default function AdminDashboard() {
         setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
         setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
         setPublications(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
+        
+        if (selectedAccountabilityProject?.id === id) {
+          setSelectedAccountabilityProject((prev: any) => ({ ...prev, status: newStatus, raw_data: updatedRawData }));
+        }
       }
       setSelectedDocument(null);
       setShowRejectModal(false);
       setRejectionMessage('');
-      showToast(`Documento atualizado para ${newStatus}.`, 'success');
+      showToast(`Documento atualizado para ${newStatus} e notificação enviada.`, 'success');
     } catch (error) {
       console.error('Error rejecting document:', error);
       showToast('Erro ao rejeitar documento.', 'error');
     }
   };
 
+  const [signingDoc, setSigningDoc] = useState<string | null>(null);
+
+  const handleDocumentStatusUpdate = async (docObj: any, docName: string, docUrl: string, newStatus: 'Aprovado' | 'Rejeitado', message: string = '') => {
+    try {
+      setSigningDoc(docName);
+      
+      let signatureData = null;
+      let finalDocUrl = docUrl;
+
+      // Check if it's a link that shouldn't be signed (like Lattes)
+      const isSignable = docName !== 'lattes' && (docUrl.includes('drive.google.com') || docUrl.endsWith('.pdf') || docUrl.endsWith('.png') || docUrl.endsWith('.jpg') || docUrl.endsWith('.jpeg'));
+
+      // If approved, sign the PDF
+      if (newStatus === 'Aprovado' && adminUser && isSignable) {
+        showToast(`Assinando digitalmente: ${docName}...`, 'success');
+        try {
+          const res = await fetch('/api/sign-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileUrl: docUrl,
+              signerName: adminUser.username,
+              documentName: docName
+            })
+          });
+          
+          const data = await res.json();
+          if (data.success) {
+            signatureData = data.signatureData;
+            
+            // Upload the signed base64 back to Google Drive
+            showToast(`Enviando versão assinada para o Google Drive...`, 'success');
+            try {
+              const uploadRes = await fetch(GOOGLE_DRIVE_SCRIPT_URL, {
+                method: 'POST',
+                body: JSON.stringify({
+                  fileName: `[ASSINADO] ${docName} - ${docObj.nome || docObj.title}.pdf`,
+                  mimeType: 'application/pdf',
+                  fileData: data.base64,
+                  researcherName: docObj.nome || 'Admin',
+                  researcherCpf: docObj.cpf || '000.000.000-00'
+                })
+              });
+              
+              const uploadData = await uploadRes.json();
+              if (uploadData.success) {
+                finalDocUrl = uploadData.url;
+                showToast(`Documento assinado e atualizado no Drive!`, 'success');
+              } else {
+                console.error('Failed to upload signed PDF:', uploadData.error);
+                showToast(`Aviso: PDF assinado, mas não foi possível atualizar no Drive. Usando link original.`, 'error');
+              }
+            } catch (uploadErr) {
+              console.error('Error uploading signed PDF:', uploadErr);
+              showToast(`Aviso: Erro ao enviar PDF assinado para o Drive.`, 'error');
+            }
+          } else {
+            console.error('Failed to sign PDF:', data.error);
+            showToast(`Aviso: Não foi possível assinar o PDF (${data.error}). O status será atualizado mesmo assim.`, 'error');
+          }
+        } catch (e) {
+          console.error('Error calling sign-pdf API:', e);
+          showToast('Aviso: Erro ao tentar assinar o PDF. O status será atualizado.', 'error');
+        }
+      }
+
+      const currentStatuses = docObj.raw_data?.document_statuses || {};
+      const updatedStatuses = {
+        ...currentStatuses,
+        [docName]: { 
+          status: newStatus, 
+          message, 
+          signature: signatureData, 
+          date: new Date().toISOString(),
+          signedUrl: finalDocUrl !== docUrl ? finalDocUrl : undefined
+        }
+      };
+
+      // Also update the URL in the documents_json if it changed
+      const updatedRawData = { ...docObj.raw_data, document_statuses: updatedStatuses };
+      
+      if (finalDocUrl !== docUrl) {
+        if (docObj.isResearcher) {
+          if (docObj.raw_data.documentos_json) {
+            try {
+              const docs = JSON.parse(docObj.raw_data.documentos_json);
+              if (docs[docName]) {
+                docs[docName] = finalDocUrl;
+                updatedRawData.documentos_json = JSON.stringify(docs);
+              }
+            } catch (e) {}
+          }
+          // Always check fixed fields for researchers
+          if (docName === 'foto_perfil') updatedRawData.foto_perfil = finalDocUrl;
+          else if (docName === 'rg_cpf') updatedRawData.rg_cpf = finalDocUrl;
+          else if (docName === 'lattes') updatedRawData.lattes = finalDocUrl;
+          else if (docName === 'comprovante_residencia') updatedRawData.comprovante_residencia = finalDocUrl;
+          else if (docName === 'termo_anuencia') updatedRawData.termo_anuencia = finalDocUrl;
+        } else if (docObj.type === 'fomento_pesquisa' && docObj.raw_data?.anexos_json) {
+          try {
+            const anexos = JSON.parse(docObj.raw_data.anexos_json);
+            if (anexos[docName]) {
+              anexos[docName] = finalDocUrl;
+              updatedRawData.anexos_json = JSON.stringify(anexos);
+            }
+          } catch (e) {}
+        } else if (docObj.type === 'fomento_publicacao' && docObj.raw_data?.documentos) {
+          const docs = { ...docObj.raw_data.documentos };
+          if (docName === 'Artigo') docs.artigo_url = finalDocUrl;
+          else if (docName === 'Resumo') docs.resumo_url = finalDocUrl;
+          else if (docName === 'Carta de Aceite') docs.aceite_url = finalDocUrl;
+          updatedRawData.documentos = docs;
+        } else if (docObj.type === 'picite' && docName === 'Plano de Trabalho') {
+          updatedRawData.plano_trabalho_url = finalDocUrl;
+        }
+      }
+
+      if (docObj.isResearcher) {
+        // If status is Pendente, change to Em Análise
+        let newResearcherStatus = docObj.status === 'Pendente' ? 'Em Análise' : docObj.status;
+        
+        if (newStatus === 'Rejeitado') {
+          newResearcherStatus = 'Pendência';
+          const messageObj = {
+            id: Date.now().toString(),
+            from: 'CPECC',
+            text: `Aviso de Rejeição no documento "${docName}": ${message}`,
+            date: new Date().toISOString(),
+            read: false
+          };
+          updatedRawData.mensagens = [...(docObj.raw_data?.mensagens || []), messageObj];
+          updatedRawData.rejection_message = `Documento "${docName}" rejeitado: ${message}`;
+          updatedRawData.allow_correction = true;
+        }
+
+        const { error } = await supabase.from('researchers').update({ 
+          raw_data: updatedRawData,
+          status: newResearcherStatus
+        }).eq('id', docObj.id);
+        if (error) throw error;
+        setResearchers(prev => prev.map(r => r.id === docObj.id ? { ...r, raw_data: updatedRawData, status: newResearcherStatus } : r));
+        
+        // Update selectedResearcher if it's the one being edited
+        if (selectedResearcher?.id === docObj.id) {
+          setSelectedResearcher((prev: any) => ({ ...prev, raw_data: updatedRawData, status: newResearcherStatus }));
+        }
+      } else {
+        // If status is Pendente, change to Em Análise for projects too
+        let newProjectStatus = docObj.status === 'Pendente' ? 'Em Análise' : docObj.status;
+
+        if (newStatus === 'Rejeitado') {
+          newProjectStatus = 'Pendência';
+          const messageObj = {
+            id: Date.now().toString(),
+            from: 'CPECC',
+            text: `Aviso de Rejeição no documento "${docName}" do projeto "${docObj.raw_data?.titulo || docObj.raw_data?.titulo_projeto}": ${message}`,
+            date: new Date().toISOString(),
+            read: false
+          };
+          
+          updatedRawData.rejection_message = `Documento "${docName}" rejeitado: ${message}`;
+          updatedRawData.allow_correction = true;
+          
+          const researcher = researchers.find(r => r.id === docObj.author_id);
+          if (researcher) {
+            const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
+            const updatedResearcherRawData = { ...researcher.raw_data, mensagens: updatedMessages };
+            await supabase.from('researchers').update({ raw_data: updatedResearcherRawData }).eq('id', researcher.id);
+            setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, raw_data: updatedResearcherRawData } : r));
+          }
+        }
+
+        const { error } = await supabase.from('projects').update({ 
+          raw_data: updatedRawData,
+          status: newProjectStatus
+        }).eq('id', docObj.id);
+        if (error) throw error;
+        
+        setAllProjects(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setSubmissions(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setPublications(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        
+        // Update selectedAccountabilityProject if it's the one being edited
+        if (selectedAccountabilityProject?.id === docObj.id) {
+          setSelectedAccountabilityProject((prev: any) => ({ ...prev, raw_data: updatedRawData, status: newProjectStatus }));
+        }
+      }
+
+      // Update selected document state
+      setSelectedDocument({ ...docObj, raw_data: updatedRawData, status: (docObj.isResearcher || docObj.type) && docObj.status === 'Pendente' ? 'Em Análise' : docObj.status });
+      
+      showToast(`Status do documento atualizado para ${newStatus}.`, 'success');
+    } catch (error) {
+      console.error('Error updating document status:', error);
+      showToast('Erro ao atualizar status do documento.', 'error');
+    } finally {
+      setSigningDoc(null);
+    }
+  };
+
   const renderDocumentLinks = (doc: any) => {
-    const urls: { name: string, url: string }[] = [];
+    const urls: { name: string, label: string, url: string }[] = [];
     if (doc.isResearcher && doc.raw_data) {
-      if (doc.raw_data.foto_perfil) urls.push({ name: 'Foto de Perfil', url: doc.raw_data.foto_perfil });
-      if (doc.raw_data.rg_cpf) urls.push({ name: 'RG/CPF', url: doc.raw_data.rg_cpf });
-      if (doc.raw_data.lattes) urls.push({ name: 'Currículo Lattes', url: doc.raw_data.lattes });
-      if (doc.raw_data.comprovante_residencia) urls.push({ name: 'Comprovante de Residência', url: doc.raw_data.comprovante_residencia });
-      if (doc.raw_data.termo_anuencia) urls.push({ name: 'Termo de Anuência', url: doc.raw_data.termo_anuencia });
+      if (doc.raw_data.foto_perfil) urls.push({ name: 'foto_perfil', label: 'Foto de Perfil', url: doc.raw_data.foto_perfil });
+      if (doc.raw_data.rg_cpf) urls.push({ name: 'rg_cpf', label: 'RG/CPF', url: doc.raw_data.rg_cpf });
+      if (doc.raw_data.lattes) urls.push({ name: 'lattes', label: 'Currículo Lattes', url: doc.raw_data.lattes });
+      if (doc.raw_data.comprovante_residencia) urls.push({ name: 'comprovante_residencia', label: 'Comprovante de Residência', url: doc.raw_data.comprovante_residencia });
+      if (doc.raw_data.termo_anuencia) urls.push({ name: 'termo_anuencia', label: 'Termo de Anuência', url: doc.raw_data.termo_anuencia });
       
       try {
         if (doc.raw_data.documentos_json) {
           const docs = JSON.parse(doc.raw_data.documentos_json);
+          const labels: Record<string, string> = {
+            'doc_rg': 'Registro Geral (RG)',
+            'doc_cpf': 'Cadastro de pessoa Física (CPF)',
+            'doc_civil': 'Registro Civil',
+            'doc_eleitor': 'Título de Eleitor',
+            'doc_militar': 'Certificado de Reservista Militar',
+            'doc_residencia': 'Comprovante de Residência',
+            'doc_vacina': 'Cartão de Vacinação',
+            'doc_diploma': 'Diploma de Graduação',
+            'doc_hist_escolar': 'Histórico escolar',
+            'doc_estrangeiro': 'Estrangeiros (RNM/Passaporte)',
+            'doc_ingles': 'Comprovante de Proficiência em Inglês',
+            'doc_vinculo': 'Comprovante de Vínculo Institucional'
+          };
           Object.entries(docs).forEach(([key, value]) => {
-            if (value) urls.push({ name: key, url: value as string });
+            if (value) urls.push({ name: key, label: labels[key] || key, url: value as string });
           });
         }
       } catch (e) {}
     } else if (doc.type === 'fomento_pesquisa' && doc.raw_data?.anexos_json) {
       try {
         const anexos = JSON.parse(doc.raw_data.anexos_json);
+        const labels: Record<string, string> = {
+          'projeto_completo': 'Projeto Completo',
+          'planos_trabalho': 'Planos de Trabalho Individuais',
+          'aprovacao_cep': 'Aprovação do CEP/CONEP'
+        };
         Object.entries(anexos).forEach(([key, value]) => {
-          if (value) urls.push({ name: key, url: value as string });
+          if (value) urls.push({ name: key, label: labels[key] || key, url: value as string });
         });
       } catch (e) {}
     } else if (doc.type === 'fomento_publicacao' && doc.raw_data?.documentos) {
       const docs = doc.raw_data.documentos;
-      if (docs.artigo_url) urls.push({ name: 'Artigo', url: docs.artigo_url });
-      if (docs.resumo_url) urls.push({ name: 'Resumo', url: docs.resumo_url });
-      if (docs.aceite_url) urls.push({ name: 'Carta de Aceite', url: docs.aceite_url });
+      if (docs.artigo_url) urls.push({ name: 'Artigo', label: 'Artigo', url: docs.artigo_url });
+      if (docs.resumo_url) urls.push({ name: 'Resumo', label: 'Resumo', url: docs.resumo_url });
+      if (docs.aceite_url) urls.push({ name: 'Carta de Aceite', label: 'Carta de Aceite', url: docs.aceite_url });
     } else if (doc.type === 'picite' && doc.raw_data?.plano_trabalho_url) {
-      urls.push({ name: 'Plano de Trabalho', url: doc.raw_data.plano_trabalho_url });
+      urls.push({ name: 'Plano de Trabalho', label: 'Plano de Trabalho', url: doc.raw_data.plano_trabalho_url });
     }
 
     if (urls.length === 0) return <p className="text-sm text-on-surface-variant">Nenhum arquivo anexado.</p>;
 
+    const docStatuses = doc.raw_data?.document_statuses || {};
+
     return (
       <div className="space-y-6">
-        {urls.map((u, i) => (
-          <div key={i} className="border border-outline-variant rounded-lg overflow-hidden">
-            <div className="bg-surface-container-low p-3 border-b border-outline-variant font-bold text-sm flex justify-between items-center">
-              <span>{u.name}</span>
-              <a href={u.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-md transition-colors">
-                <ExternalLink className="w-4 h-4" /> Abrir em nova guia
-              </a>
+        {urls.map((u, i) => {
+          const statusInfo = docStatuses[u.name];
+          const isApproved = statusInfo?.status === 'Aprovado';
+          const isRejected = statusInfo?.status === 'Rejeitado';
+          const isSigning = signingDoc === u.name;
+          const isSignable = u.name !== 'lattes' && (u.url.includes('drive.google.com') || u.url.endsWith('.pdf') || u.url.match(/\.(jpeg|jpg|png)$/i));
+
+          return (
+            <div key={i} className={`border rounded-lg overflow-hidden ${isApproved ? 'border-success/30' : isRejected ? 'border-error/30' : 'border-outline-variant'}`}>
+              <div className={`p-3 border-b font-bold text-sm flex justify-between items-center ${isApproved ? 'bg-success/5 border-success/20' : isRejected ? 'bg-error/5 border-error/20' : 'bg-surface-container-low border-outline-variant'}`}>
+                <div className="flex items-center gap-2">
+                  <span>{u.label}</span>
+                  {isApproved && <span className="px-2 py-0.5 rounded text-[10px] uppercase bg-success/10 text-success">Aprovado</span>}
+                  {isRejected && <span className="px-2 py-0.5 rounded text-[10px] uppercase bg-error/10 text-error">Rejeitado</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <a href={u.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-md transition-colors text-xs">
+                    <ExternalLink className="w-3 h-3" /> Abrir
+                  </a>
+                </div>
+              </div>
+              
+              <div className="p-6 bg-surface-container-lowest flex flex-col items-center justify-center text-center">
+                <FileText className={`w-12 h-12 mb-3 ${isApproved ? 'text-success/50' : isRejected ? 'text-error/50' : 'text-on-surface-variant/50'}`} />
+                
+                {statusInfo?.signature && (
+                  <div className="mb-4 p-3 bg-success/5 border border-success/20 rounded-lg text-left w-full max-w-md">
+                    <div className="flex items-center gap-2 text-success font-bold text-xs mb-1">
+                      <Shield className="w-4 h-4" /> Assinatura Digital CPECC
+                    </div>
+                    <div className="text-[10px] text-on-surface-variant space-y-1">
+                      <p><span className="font-bold">Assinado por:</span> {statusInfo.signature.signerName}</p>
+                      <p><span className="font-bold">Data/Hora:</span> {statusInfo.signature.timestamp}</p>
+                      <p><span className="font-bold">ID:</span> {statusInfo.signature.id}</p>
+                      <p><span className="font-bold">Hash:</span> {statusInfo.signature.hash}</p>
+                    </div>
+                  </div>
+                )}
+
+                {isRejected && statusInfo?.message && (
+                  <div className="mb-4 p-3 bg-error/5 border border-error/20 rounded-lg text-left w-full max-w-md text-sm text-error-dark">
+                    <span className="font-bold">Motivo da Rejeição:</span> {statusInfo.message}
+                  </div>
+                )}
+
+                <div className="flex gap-2 mt-2">
+                  <button 
+                    onClick={() => {
+                      setDocToRejectInfo({ doc, name: u.name, url: u.url });
+                      setRejectionMessage('');
+                      setShowIndividualDocRejectModal(true);
+                    }}
+                    disabled={isSigning}
+                    className="px-3 py-1.5 bg-error/10 text-error hover:bg-error/20 rounded text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <X className="w-3 h-3" /> Rejeitar
+                  </button>
+                  <button 
+                    onClick={() => handleDocumentStatusUpdate(doc, u.name, u.url, 'Aprovado')}
+                    disabled={isSigning || isApproved}
+                    className="px-3 py-1.5 bg-success/10 text-success hover:bg-success/20 rounded text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {isSigning ? <Clock className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 
+                    {isSigning ? 'Processando...' : (isSignable ? 'Aprovar e Assinar' : 'Aprovar')}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="p-12 bg-surface-container-lowest flex flex-col items-center justify-center text-center">
-              <FileText className="w-16 h-16 text-on-surface-variant/50 mb-4" />
-              <h4 className="text-lg font-bold text-on-surface mb-2">Visualização de Documento</h4>
-              <p className="text-on-surface-variant max-w-md mb-6">
-                Para garantir a visualização correta e em tela cheia, clique no botão abaixo para abrir o documento em uma nova guia.
-              </p>
-              <a href={u.url} target="_blank" rel="noopener noreferrer" className="btn-primary flex items-center gap-2">
-                <ExternalLink className="w-5 h-5" /> Visualizar Documento Completo
-              </a>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
@@ -418,18 +1199,83 @@ export default function AdminDashboard() {
                     </h3>
                     <div className="flex gap-2 shrink-0">
                       <button 
-                        onClick={() => handleApproveDocument(selectedDocument.id, selectedDocument.isResearcher)}
-                        className="px-3 py-1.5 bg-success text-on-primary text-sm font-bold rounded-lg hover:bg-success/90 flex items-center gap-1"
-                      >
-                        <Check className="w-4 h-4" /> Aprovar
-                      </button>
-                      <button 
                         onClick={() => {
-                          setShowRejectModal(true);
+                          const docStatuses = selectedDocument.raw_data?.document_statuses || {};
+                          const urls: { name: string, label: string, url: string }[] = [];
+                          
+                          if (selectedDocument.isResearcher && selectedDocument.raw_data) {
+                            if (selectedDocument.raw_data.foto_perfil) urls.push({ name: 'foto_perfil', label: 'Foto de Perfil', url: selectedDocument.raw_data.foto_perfil });
+                            if (selectedDocument.raw_data.rg_cpf) urls.push({ name: 'rg_cpf', label: 'RG/CPF', url: selectedDocument.raw_data.rg_cpf });
+                            if (selectedDocument.raw_data.lattes) urls.push({ name: 'lattes', label: 'Currículo Lattes', url: selectedDocument.raw_data.lattes });
+                            if (selectedDocument.raw_data.comprovante_residencia) urls.push({ name: 'comprovante_residencia', label: 'Comprovante de Residência', url: selectedDocument.raw_data.comprovante_residencia });
+                            if (selectedDocument.raw_data.termo_anuencia) urls.push({ name: 'termo_anuencia', label: 'Termo de Anuência', url: selectedDocument.raw_data.termo_anuencia });
+                            try {
+                              if (selectedDocument.raw_data.documentos_json) {
+                                const docs = JSON.parse(selectedDocument.raw_data.documentos_json);
+                                const labels: Record<string, string> = {
+                                  'doc_rg': 'Registro Geral (RG)',
+                                  'doc_cpf': 'Cadastro de pessoa Física (CPF)',
+                                  'doc_civil': 'Registro Civil',
+                                  'doc_eleitor': 'Título de Eleitor',
+                                  'doc_militar': 'Certificado de Reservista Militar',
+                                  'doc_residencia': 'Comprovante de Residência',
+                                  'doc_vacina': 'Cartão de Vacinação',
+                                  'doc_diploma': 'Diploma de Graduação',
+                                  'doc_hist_escolar': 'Histórico escolar',
+                                  'doc_estrangeiro': 'Estrangeiros (RNM/Passaporte)',
+                                  'doc_ingles': 'Comprovante de Proficiência em Inglês',
+                                  'doc_vinculo': 'Comprovante de Vínculo Institucional'
+                                };
+                                Object.entries(docs).forEach(([key, value]) => {
+                                  if (value) urls.push({ name: key, label: labels[key] || key, url: value as string });
+                                });
+                              }
+                            } catch (e) {}
+                          } else if (selectedDocument.type === 'fomento_pesquisa' && selectedDocument.raw_data?.anexos_json) {
+                            try {
+                              const anexos = JSON.parse(selectedDocument.raw_data.anexos_json);
+                              const labels: Record<string, string> = {
+                                'projeto_completo': 'Projeto Completo',
+                                'planos_trabalho': 'Planos de Trabalho Individuais',
+                                'aprovacao_cep': 'Aprovação do CEP/CONEP'
+                              };
+                              Object.entries(anexos).forEach(([key, value]) => {
+                                if (value) urls.push({ name: key, label: labels[key] || key, url: value as string });
+                              });
+                            } catch (e) {}
+                          } else if (selectedDocument.type === 'fomento_publicacao' && selectedDocument.raw_data?.documentos) {
+                            const docs = selectedDocument.raw_data.documentos;
+                            if (docs.artigo_url) urls.push({ name: 'Artigo', label: 'Artigo', url: docs.artigo_url });
+                            if (docs.resumo_url) urls.push({ name: 'Resumo', label: 'Resumo', url: docs.resumo_url });
+                            if (docs.aceite_url) urls.push({ name: 'Carta de Aceite', label: 'Carta de Aceite', url: docs.aceite_url });
+                          } else if (selectedDocument.type === 'picite' && selectedDocument.raw_data?.plano_trabalho_url) {
+                            urls.push({ name: 'Plano de Trabalho', label: 'Plano de Trabalho', url: selectedDocument.raw_data.plano_trabalho_url });
+                          }
+
+                          const allAnalyzed = urls.every(u => docStatuses[u.name]?.status);
+                          if (!allAnalyzed && urls.length > 0) {
+                            showToast('Analise todos os documentos antes de concluir.', 'error');
+                            return;
+                          }
+
+                          const hasRejections = urls.some(u => docStatuses[u.name]?.status === 'Rejeitado');
+                          
+                          if (hasRejections) {
+                            // Collect rejection messages
+                            const rejectionMessages = urls
+                              .filter(u => docStatuses[u.name]?.status === 'Rejeitado')
+                              .map(u => `${u.label}: ${docStatuses[u.name]?.message}`)
+                              .join('\n');
+                            
+                            setRejectionMessage(`Os seguintes documentos foram rejeitados:\n${rejectionMessages}`);
+                            setShowRejectModal(true);
+                          } else {
+                            handleApproveDocument(selectedDocument.id, selectedDocument.isResearcher);
+                          }
                         }}
-                        className="px-3 py-1.5 bg-error text-on-primary text-sm font-bold rounded-lg hover:bg-error/90 flex items-center gap-1"
+                        className="px-4 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg hover:bg-primary/90 flex items-center gap-2"
                       >
-                        <X className="w-4 h-4" /> Rejeitar
+                        <CheckCircle className="w-4 h-4" /> Concluir Análise
                       </button>
                     </div>
                   </div>
@@ -448,58 +1294,6 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
-
-        {/* Reject Modal */}
-        {showRejectModal && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
-            <div className="bg-surface p-6 rounded-xl max-w-md w-full shadow-2xl">
-              <h3 className="text-xl font-bold text-primary mb-4">Motivo da Rejeição</h3>
-              <textarea 
-                value={rejectionMessage}
-                onChange={(e) => setRejectionMessage(e.target.value)}
-                className="input-field w-full h-32 mb-4"
-                placeholder="Descreva o motivo da rejeição para o pesquisador..."
-              />
-              
-              <div className="mb-6">
-                <p className="text-sm font-bold text-on-surface mb-2">Ação após rejeição:</p>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="radio" 
-                      name="allowCorrection" 
-                      checked={allowCorrection === true} 
-                      onChange={() => setAllowCorrection(true)}
-                      className="text-primary focus:ring-primary"
-                    />
-                    <span className="text-sm text-on-surface">Permitir correção (Status: Pendência)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="radio" 
-                      name="allowCorrection" 
-                      checked={allowCorrection === false} 
-                      onChange={() => setAllowCorrection(false)}
-                      className="text-primary focus:ring-primary"
-                    />
-                    <span className="text-sm text-on-surface">Não permitir correção (Encerrar Projeto)</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShowRejectModal(false)} className="btn-secondary">Cancelar</button>
-                <button 
-                  onClick={() => handleRejectDocument(selectedDocument.id, rejectionMessage, selectedDocument.isResearcher, allowCorrection)}
-                  className="btn-primary bg-error hover:bg-error/90"
-                  disabled={!rejectionMessage.trim()}
-                >
-                  Confirmar Rejeição
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -674,40 +1468,69 @@ export default function AdminDashboard() {
                   <div className="flex justify-end gap-2">
                     <button 
                       onClick={() => {
+                        const project = allProjects.find(proj => proj.id === s.id);
+                        if (project) setSelectedDocument(project);
+                      }}
+                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Analisar Documentos"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => {
                         const project = allProjects.find(p => p.id === s.id);
                         const researcher = researchers.find(r => r.id === project?.author_id);
                         if (project && researcher) {
                           const printWindow = window.open('', '_blank');
                           if (printWindow) {
-                            let equipeHtml = '';
+                            let equipeHtml = 'Nenhum membro da equipe cadastrado.';
+                            let cronogramaHtml = 'Nenhum cronograma cadastrado.';
+                            let orcamentoHtml = 'Nenhum orçamento cadastrado.';
+                            
                             try {
                               if (project.raw_data?.equipe_json) {
                                 const equipe = JSON.parse(project.raw_data.equipe_json);
                                 if (equipe && equipe.length > 0) {
                                   equipeHtml = `
-                                    <div class="section">
-                                      <h2>Relatório de Participantes da Pesquisa</h2>
-                                      <table>
-                                        <thead>
-                                          <tr>
-                                            <th>Nome</th>
-                                            <th>Função</th>
-                                            <th>Titulação</th>
-                                            <th>Instituição</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          ${equipe.map((m: any) => `
-                                            <tr>
-                                              <td>${m.nome || 'N/A'}</td>
-                                              <td>${m.funcao || 'N/A'}</td>
-                                              <td>${m.titulacao || 'N/A'}</td>
-                                              <td>${m.instituicao || 'N/A'}</td>
-                                            </tr>
-                                          `).join('')}
-                                        </tbody>
-                                      </table>
-                                    </div>
+                                    <table>
+                                      <thead>
+                                        <tr><th>Nome</th><th>Função</th><th>Titulação</th><th>Instituição</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        ${equipe.map((m: any) => `<tr><td>${m.nome || 'N/A'}</td><td>${m.funcao || 'N/A'}</td><td>${m.titulacao || 'N/A'}</td><td>${m.instituicao || 'N/A'}</td></tr>`).join('')}
+                                      </tbody>
+                                    </table>
+                                  `;
+                                }
+                              }
+                              
+                              if (project.raw_data?.cronograma_json) {
+                                const cronograma = JSON.parse(project.raw_data.cronograma_json);
+                                if (cronograma && cronograma.length > 0) {
+                                  cronogramaHtml = `
+                                    <table>
+                                      <thead>
+                                        <tr><th>Atividade</th><th>Início</th><th>Fim</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        ${cronograma.map((c: any) => `<tr><td>${c.atividade || 'N/A'}</td><td>${c.inicio || 'N/A'}</td><td>${c.fim || 'N/A'}</td></tr>`).join('')}
+                                      </tbody>
+                                    </table>
+                                  `;
+                                }
+                              }
+
+                              if (project.raw_data?.orcamento_json) {
+                                const orcamento = JSON.parse(project.raw_data.orcamento_json);
+                                if (orcamento && orcamento.length > 0) {
+                                  orcamentoHtml = `
+                                    <table>
+                                      <thead>
+                                        <tr><th>Item</th><th>Categoria</th><th>Valor</th><th>Justificativa</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        ${orcamento.map((o: any) => `<tr><td>${o.item || 'N/A'}</td><td>${o.categoria || 'N/A'}</td><td>R$ ${o.valor || '0,00'}</td><td>${o.justificativa || 'N/A'}</td></tr>`).join('')}
+                                      </tbody>
+                                    </table>
                                   `;
                                 }
                               }
@@ -861,6 +1684,15 @@ export default function AdminDashboard() {
                 </td>
                 <td className="p-4 text-right">
                   <div className="flex justify-end gap-2">
+                    <button 
+                      onClick={() => {
+                        const project = allProjects.find(proj => proj.id === p.id);
+                        if (project) setSelectedDocument(project);
+                      }}
+                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Analisar Documentos"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
                     <button 
                       onClick={() => {
                         const project = allProjects.find(proj => proj.id === p.id);
@@ -1031,9 +1863,9 @@ export default function AdminDashboard() {
               <th className="p-4 text-right">Ações</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-outline-variant">
-            {allProjects.filter(s => s.status === 'Aprovado' || s.status === 'Em Execução').map(s => {
-              const despesas = s.raw_data?.despesas || [];
+      <tbody className="divide-y divide-outline-variant">
+        {allProjects.filter(s => s.raw_data?.despesas?.length > 0 || s.status === 'Aprovado' || s.status === 'Em Execução').map(s => {
+          const despesas = s.raw_data?.despesas || [];
               let statusText = 'Aguardando Notas';
               let statusClass = 'bg-secondary/10 text-secondary';
               
@@ -1146,9 +1978,39 @@ export default function AdminDashboard() {
 
       {showAddAdmin && (
         <div className="glass-panel p-6 rounded-xl animate-in fade-in slide-in-from-top-4">
-          <form onSubmit={handleAddAdmin} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <form onSubmit={handleAddAdmin} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div>
-              <label className="label-text">Usuário</label>
+              <label className="label-text">Nome Completo</label>
+              <input 
+                type="text" 
+                className="input-field" 
+                value={newAdmin.nome}
+                onChange={e => setNewAdmin({...newAdmin, nome: e.target.value})}
+                required 
+              />
+            </div>
+            <div>
+              <label className="label-text">Cargo</label>
+              <input 
+                type="text" 
+                className="input-field" 
+                value={newAdmin.cargo}
+                onChange={e => setNewAdmin({...newAdmin, cargo: e.target.value})}
+                required 
+              />
+            </div>
+            <div>
+              <label className="label-text">Matrícula</label>
+              <input 
+                type="text" 
+                className="input-field" 
+                value={newAdmin.matricula}
+                onChange={e => setNewAdmin({...newAdmin, matricula: e.target.value})}
+                required 
+              />
+            </div>
+            <div>
+              <label className="label-text">Usuário (Login)</label>
               <input 
                 type="text" 
                 className="input-field" 
@@ -1179,8 +2041,7 @@ export default function AdminDashboard() {
                 <option value="master">Master</option>
               </select>
             </div>
-            <div className="flex gap-2">
-              <button type="submit" className="btn-primary flex-1">Salvar</button>
+            <div className="md:col-span-3 flex justify-end gap-2 mt-2">
               <button 
                 type="button" 
                 onClick={() => setShowAddAdmin(false)}
@@ -1188,31 +2049,47 @@ export default function AdminDashboard() {
               >
                 Cancelar
               </button>
+              <button type="submit" className="btn-primary px-8">Salvar</button>
             </div>
           </form>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {admins.map(admin => (
-          <div key={admin.id} className="glass-panel p-6 rounded-xl flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                <Shield className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="font-bold text-primary">{admin.username}</div>
-                <div className="text-xs text-on-surface-variant uppercase tracking-widest">{admin.role}</div>
-              </div>
-            </div>
+          <div key={admin.id} className="glass-panel p-6 rounded-xl relative">
             {admin.username !== 'admin' && (
               <button 
                 onClick={() => removeAdmin(admin.id)}
-                className="p-2 text-error hover:bg-error/10 rounded-lg"
+                className="absolute top-4 right-4 text-on-surface-variant hover:text-error transition-colors"
+                title="Remover Gestor"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
+            <div className="flex items-start gap-4 mb-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <Shield className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="font-bold text-primary text-lg">{admin.nome || admin.username}</div>
+                <div className="text-xs text-on-surface-variant uppercase tracking-widest">{admin.role}</div>
+              </div>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between border-b border-outline-variant/30 pb-1">
+                <span className="text-on-surface-variant">Login:</span>
+                <span className="font-medium">{admin.username}</span>
+              </div>
+              <div className="flex justify-between border-b border-outline-variant/30 pb-1">
+                <span className="text-on-surface-variant">Cargo:</span>
+                <span className="font-medium">{admin.cargo || 'Não informado'}</span>
+              </div>
+              <div className="flex justify-between pb-1">
+                <span className="text-on-surface-variant">Matrícula:</span>
+                <span className="font-medium">{admin.matricula || 'Não informada'}</span>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -1270,6 +2147,19 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => {
+                            const latestProject = allProjects.filter(p => p.author_id === researcher.id).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                            if (latestProject) {
+                              generateFullDossier(latestProject.id);
+                            } else {
+                              showToast('Este pesquisador ainda não possui projetos submetidos.', 'error');
+                            }
+                          }}
+                          className="p-2 hover:bg-primary/10 text-primary rounded-lg" title="Imprimir Dossiê Completo"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </button>
                         <button 
                           onClick={() => setSelectedResearcher(researcher)}
                           className="p-2 hover:bg-primary/10 text-primary rounded-lg" title="Ver Perfil"
@@ -1467,6 +2357,12 @@ export default function AdminDashboard() {
             <div className="text-[10px] text-on-surface-variant uppercase">{adminUser?.role}</div>
           </div>
           <button 
+            onClick={handleExportData}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-primary hover:bg-primary/10 transition-all border border-primary/20 mb-2"
+          >
+            <Download className="w-4 h-4" /> Exportar Base
+          </button>
+          <button 
             onClick={logout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-error hover:bg-error/10 transition-all"
           >
@@ -1535,31 +2431,163 @@ export default function AdminDashboard() {
                     </span>
                   </div>
                   <div className="flex gap-2">
-                    {selectedResearcher.status !== 'Ativo' && (
-                      <button 
-                        onClick={() => handleApproveDocument(selectedResearcher.id, true)}
-                        className="btn-primary flex items-center gap-2"
-                      >
-                        <CheckCircle className="w-4 h-4" /> Aprovar Cadastro
-                      </button>
-                    )}
-                    {selectedResearcher.status === 'Ativo' && (
+                    <button 
+                      onClick={() => {
+                        const researcher = selectedResearcher;
+                        const printWindow = window.open('', '_blank');
+                        if (printWindow) {
+                          printWindow.document.write(`
+                            <html>
+                              <head>
+                                <title>Dossiê do Pesquisador - ${researcher.nome}</title>
+                                <style>
+                                  body { font-family: 'Inter', Arial, sans-serif; padding: 40px; line-height: 1.6; color: #1a202c; max-width: 1000px; margin: 0 auto; background: #f8fafc; }
+                                  h1 { color: #003e6f; border-bottom: 3px solid #003e6f; padding-bottom: 10px; margin-bottom: 30px; text-align: center; }
+                                  h2 { color: #006970; margin-top: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-size: 1.4em; }
+                                  .section { margin-bottom: 30px; background: #fff; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
+                                  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+                                  .label { font-weight: bold; color: #718096; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 2px; }
+                                  .value { margin-bottom: 15px; }
+                                  .value-text { display: block; color: #1a202c; font-weight: 500; }
+                                  .footer { margin-top: 50px; text-align: center; font-size: 0.8em; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 20px; }
+                                  @media print {
+                                    body { padding: 0; background: white; }
+                                    button { display: none; }
+                                  }
+                                </style>
+                              </head>
+                              <body>
+                                <div style="text-align: right; margin-bottom: 20px;">
+                                  <button onclick="window.print()" style="padding: 12px 24px; background: #003e6f; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">Imprimir Dossiê</button>
+                                </div>
+                                <h1>Dossiê do Pesquisador</h1>
+                                
+                                <div class="section">
+                                  <h2>1. Dados Pessoais e Contato</h2>
+                                  <div class="grid-3">
+                                    <div class="value"><span class="label">Nome Completo</span><span class="value-text">${researcher.nome || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">CPF</span><span class="value-text">${researcher.cpf || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">RG</span><span class="value-text">${researcher.raw_data?.rg || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">E-mail Institucional</span><span class="value-text">${researcher.email_inst || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">E-mail Pessoal</span><span class="value-text">${researcher.raw_data?.email_pessoal || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Telefone</span><span class="value-text">${researcher.raw_data?.telefone || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Data de Nascimento</span><span class="value-text">${researcher.raw_data?.data_nascimento || 'N/A'}</span></div>
+                                  </div>
+                                </div>
+
+                                <div class="section">
+                                  <h2>2. Dados Institucionais e Acadêmicos</h2>
+                                  <div class="grid-3">
+                                    <div class="value"><span class="label">Titulação</span><span class="value-text">${researcher.titulacao || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Vínculo</span><span class="value-text">${researcher.raw_data?.vinculo_tipo || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Lotação</span><span class="value-text">${researcher.raw_data?.lotacao || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Regional</span><span class="value-text">${researcher.raw_data?.regional || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Matrícula</span><span class="value-text">${researcher.raw_data?.matricula || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Carga Horária</span><span class="value-text">${researcher.raw_data?.carga_horaria || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Área (CNPq)</span><span class="value-text">${researcher.raw_data?.area_conhecimento || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">ORCID</span><span class="value-text">${researcher.raw_data?.orcid || 'N/A'}</span></div>
+                                  </div>
+                                </div>
+
+                                <div class="section">
+                                  <h2>3. Características Sociodemográficas</h2>
+                                  <div class="grid-3">
+                                    <div class="value"><span class="label">Gênero</span><span class="value-text">${researcher.raw_data?.genero || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Raça/Cor</span><span class="value-text">${researcher.raw_data?.raca_cor || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">PNE</span><span class="value-text">${researcher.raw_data?.pne || 'Não'}</span></div>
+                                    <div class="value"><span class="label">Ensino Médio</span><span class="value-text">${researcher.raw_data?.ensino_medio || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Beneficiário Social</span><span class="value-text">${researcher.raw_data?.beneficiario_social || 'Não'}</span></div>
+                                  </div>
+                                </div>
+
+                                <div class="section">
+                                  <h2>4. Endereço e Dados Bancários</h2>
+                                  <div class="value-text">${researcher.raw_data?.logradouro || ''}, ${researcher.raw_data?.numero || ''} - ${researcher.raw_data?.bairro || ''}, ${researcher.raw_data?.cidade || ''}/${researcher.raw_data?.uf || ''} - CEP: ${researcher.raw_data?.cep || ''}</div>
+                                  <div class="value-text" style="margin-top: 10px;">Banco: ${researcher.raw_data?.banco || 'N/A'} | Agência: ${researcher.raw_data?.agencia || 'N/A'} | Conta: ${researcher.raw_data?.conta || 'N/A'} (${researcher.raw_data?.tipo_conta || 'N/A'})</div>
+                                </div>
+
+                                <div class="footer">
+                                  Documento gerado automaticamente pelo Portal CPECC/ESPDF em ${new Date().toLocaleString('pt-BR')}.
+                                </div>
+                              </body>
+                            </html>
+                          `);
+                          printWindow.document.close();
+                        }
+                      }}
+                      className="btn-secondary flex items-center gap-2"
+                    >
+                      <FileText className="w-4 h-4" /> Gerar Dossiê
+                    </button>
+                    {selectedResearcher.status === 'Ativo' ? (
                       <button 
                         onClick={() => handleUpdateResearcherStatus(selectedResearcher.id, 'Pendente')}
                         className="btn-secondary flex items-center gap-2 text-yellow-600 border-yellow-200 hover:bg-yellow-50"
                       >
                         <AlertCircle className="w-4 h-4" /> Suspender Cadastro
                       </button>
+                    ) : (
+                      <button 
+                        onClick={() => {
+                          const docStatuses = selectedResearcher.raw_data?.document_statuses || {};
+                          const urls: { name: string, label: string, url: string }[] = [];
+                          
+                          if (selectedResearcher.raw_data) {
+                            if (selectedResearcher.raw_data.foto_perfil) urls.push({ name: 'foto_perfil', label: 'Foto de Perfil', url: selectedResearcher.raw_data.foto_perfil });
+                            if (selectedResearcher.raw_data.rg_cpf) urls.push({ name: 'rg_cpf', label: 'RG/CPF', url: selectedResearcher.raw_data.rg_cpf });
+                            if (selectedResearcher.raw_data.lattes) urls.push({ name: 'lattes', label: 'Currículo Lattes', url: selectedResearcher.raw_data.lattes });
+                            if (selectedResearcher.raw_data.comprovante_residencia) urls.push({ name: 'comprovante_residencia', label: 'Comprovante de Residência', url: selectedResearcher.raw_data.comprovante_residencia });
+                            if (selectedResearcher.raw_data.termo_anuencia) urls.push({ name: 'termo_anuencia', label: 'Termo de Anuência', url: selectedResearcher.raw_data.termo_anuencia });
+                            try {
+                              if (selectedResearcher.raw_data.documentos_json) {
+                                const docs = JSON.parse(selectedResearcher.raw_data.documentos_json);
+                                const labels: Record<string, string> = {
+                                  'doc_rg': 'Registro Geral (RG)',
+                                  'doc_cpf': 'Cadastro de pessoa Física (CPF)',
+                                  'doc_civil': 'Registro Civil',
+                                  'doc_eleitor': 'Título de Eleitor',
+                                  'doc_militar': 'Certificado de Reservista Militar',
+                                  'doc_residencia': 'Comprovante de Residência',
+                                  'doc_vacina': 'Cartão de Vacinação',
+                                  'doc_diploma': 'Diploma de Graduação',
+                                  'doc_hist_escolar': 'Histórico escolar',
+                                  'doc_estrangeiro': 'Estrangeiros (RNM/Passaporte)',
+                                  'doc_ingles': 'Comprovante de Proficiência em Inglês',
+                                  'doc_vinculo': 'Comprovante de Vínculo Institucional'
+                                };
+                                Object.entries(docs).forEach(([key, value]) => {
+                                  if (value) urls.push({ name: key, label: labels[key] || key, url: value as string });
+                                });
+                              }
+                            } catch (e) {}
+                          }
+
+                          const allAnalyzed = urls.every(u => docStatuses[u.name]?.status);
+                          if (!allAnalyzed && urls.length > 0) {
+                            showToast('Analise todos os documentos antes de concluir.', 'error');
+                            return;
+                          }
+
+                          const hasRejections = urls.some(u => docStatuses[u.name]?.status === 'Rejeitado');
+                          
+                          if (hasRejections) {
+                            const rejectionMessages = urls
+                              .filter(u => docStatuses[u.name]?.status === 'Rejeitado')
+                              .map(u => `${u.label}: ${docStatuses[u.name]?.message}`)
+                              .join('\n');
+                            
+                            setRejectionMessage(`Os seguintes documentos foram rejeitados:\n${rejectionMessages}`);
+                            setSelectedDocument({ ...selectedResearcher, isResearcher: true });
+                            setShowRejectModal(true);
+                          } else {
+                            handleApproveDocument(selectedResearcher.id, true);
+                          }
+                        }}
+                        className="px-4 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg hover:bg-primary/90 flex items-center gap-2"
+                      >
+                        <CheckCircle className="w-4 h-4" /> Concluir Análise
+                      </button>
                     )}
-                    <button 
-                      onClick={() => {
-                        setSelectedDocument({ ...selectedResearcher, isResearcher: true });
-                        setShowRejectModal(true);
-                      }}
-                      className="px-4 py-2 bg-error text-on-primary text-sm font-bold rounded-lg hover:bg-error/90 flex items-center gap-2"
-                    >
-                      <X className="w-4 h-4" /> Rejeitar Cadastro
-                    </button>
                   </div>
                 </div>
 
@@ -1569,6 +2597,8 @@ export default function AdminDashboard() {
                       <h3 className="text-lg font-bold text-on-surface mb-4 border-b border-gray-100 pb-2">Dados Pessoais</h3>
                       <div className="space-y-3">
                         <div><span className="text-xs font-bold text-on-surface-variant uppercase">CPF:</span> <p className="font-medium">{selectedResearcher.cpf}</p></div>
+                        <div><span className="text-xs font-bold text-on-surface-variant uppercase">RG:</span> <p className="font-medium">{selectedResearcher.raw_data?.rg || 'Não informado'}</p></div>
+                        <div><span className="text-xs font-bold text-on-surface-variant uppercase">PIS/PASEP/NIT/NIS:</span> <p className="font-medium">{selectedResearcher.raw_data?.pis_pasep || 'Não informado'}</p></div>
                         <div><span className="text-xs font-bold text-on-surface-variant uppercase">Email Institucional:</span> <p className="font-medium">{selectedResearcher.email_inst}</p></div>
                         <div><span className="text-xs font-bold text-on-surface-variant uppercase">Telefone:</span> <p className="font-medium">{selectedResearcher.raw_data?.telefone || 'Não informado'}</p></div>
                         <div><span className="text-xs font-bold text-on-surface-variant uppercase">Titulação:</span> <p className="font-medium">{selectedResearcher.titulacao || 'Não informado'}</p></div>
@@ -1603,8 +2633,151 @@ export default function AdminDashboard() {
                         <div><span className="text-xs font-bold text-on-surface-variant uppercase">Tipo de Conta:</span> <p className="font-medium">{selectedResearcher.raw_data?.tipo_conta || 'Não informado'}</p></div>
                       </div>
                     </section>
+
+                    <section className="bento-card flex flex-col h-full">
+                      <h3 className="text-lg font-bold text-on-surface mb-4 border-b border-gray-100 pb-2">Mensagens</h3>
+                      <div className="space-y-4 flex-1 overflow-y-auto pr-2 mb-4 min-h-[200px] max-h-[400px]">
+                        {selectedResearcher.raw_data?.mensagens?.length > 0 ? (
+                          selectedResearcher.raw_data.mensagens.map((msg: any) => (
+                            <div key={msg.id} className={`p-3 rounded-lg text-sm ${msg.from === 'CPECC' ? 'bg-primary/10 ml-4 border border-primary/20' : 'bg-surface-container mr-4 border border-outline-variant'}`}>
+                              <div className="flex justify-between items-start mb-1">
+                                <span className="font-bold text-xs">{msg.from === 'CPECC' ? 'Gestor (Você)' : 'Pesquisador'}</span>
+                                <span className="text-[10px] text-on-surface-variant">{new Date(msg.date).toLocaleString('pt-BR')}</span>
+                              </div>
+                              <p className="text-on-surface whitespace-pre-wrap">{msg.text}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-on-surface-variant text-center py-4">Nenhuma mensagem trocada.</p>
+                        )}
+                      </div>
+                      <div className="flex gap-2 mt-auto">
+                        <input 
+                          type="text" 
+                          value={adminNewMessage}
+                          onChange={(e) => setAdminNewMessage(e.target.value)}
+                          placeholder="Digite uma mensagem..."
+                          className="input-field flex-1"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSendAdminMessage(selectedResearcher.id);
+                          }}
+                        />
+                        <button 
+                          onClick={() => handleSendAdminMessage(selectedResearcher.id)}
+                          disabled={!adminNewMessage.trim()}
+                          className="px-4 py-2 bg-primary text-on-primary rounded-lg font-bold hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          Enviar
+                        </button>
+                      </div>
+                    </section>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reject Modal */}
+        {showRejectModal && selectedDocument && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+            <div className="bg-surface p-6 rounded-xl max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold text-primary mb-4">Motivo da Rejeição</h3>
+              <textarea 
+                value={rejectionMessage}
+                onChange={(e) => setRejectionMessage(e.target.value)}
+                className="input-field w-full h-32 mb-4"
+                placeholder="Descreva o motivo da rejeição para o pesquisador..."
+              />
+              
+              <div className="mb-6">
+                <p className="text-sm font-bold text-on-surface mb-2">Ação após rejeição:</p>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="radio" 
+                      name="allowCorrection" 
+                      checked={allowCorrection === true} 
+                      onChange={() => setAllowCorrection(true)}
+                      className="text-primary focus:ring-primary"
+                    />
+                    <span className="text-sm text-on-surface">Permitir correção (Status: Pendência)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="radio" 
+                      name="allowCorrection" 
+                      checked={allowCorrection === false} 
+                      onChange={() => setAllowCorrection(false)}
+                      className="text-primary focus:ring-primary"
+                    />
+                    <span className="text-sm text-on-surface">Não permitir correção (Encerrar Projeto)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowRejectModal(false)} className="btn-secondary">Cancelar</button>
+                <button 
+                  onClick={() => handleRejectDocument(selectedDocument.id, rejectionMessage, selectedDocument.isResearcher, allowCorrection)}
+                  className="btn-primary bg-error hover:bg-error/90"
+                  disabled={!rejectionMessage.trim()}
+                >
+                  Confirmar Rejeição
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Individual Document Reject Modal */}
+        {showIndividualDocRejectModal && docToRejectInfo && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+            <div className="bg-surface p-6 rounded-xl max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold text-primary mb-2">Rejeitar Documento</h3>
+              <p className="text-sm text-on-surface-variant mb-4">Documento: <span className="font-bold">{docToRejectInfo.name}</span></p>
+              
+              <label className="label-text mb-2 block">Motivo da Rejeição</label>
+              <textarea 
+                value={rejectionMessage}
+                onChange={(e) => setRejectionMessage(e.target.value)}
+                className="input-field w-full h-32 mb-6"
+                placeholder="Descreva o motivo da inconsistência ou rejeição..."
+                autoFocus
+              />
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    setShowIndividualDocRejectModal(false);
+                    setDocToRejectInfo(null);
+                    setRejectionMessage('');
+                  }}
+                  className="btn-secondary flex-1"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => {
+                    if (!rejectionMessage.trim()) {
+                      showToast('Por favor, informe o motivo da rejeição.', 'error');
+                      return;
+                    }
+                    handleDocumentStatusUpdate(
+                      docToRejectInfo.doc, 
+                      docToRejectInfo.name, 
+                      docToRejectInfo.url, 
+                      'Rejeitado', 
+                      rejectionMessage
+                    );
+                    setShowIndividualDocRejectModal(false);
+                    setDocToRejectInfo(null);
+                    setRejectionMessage('');
+                  }}
+                  className="btn-primary bg-error hover:bg-error-dark flex-1"
+                >
+                  Confirmar Rejeição
+                </button>
               </div>
             </div>
           </div>

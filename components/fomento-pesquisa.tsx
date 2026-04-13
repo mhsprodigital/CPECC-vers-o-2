@@ -26,9 +26,29 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
     metodologia: initialData?.metodologia || '',
   });
 
-  const [cronograma, setCronograma] = useState(initialData?.cronograma || [{ atividade: '', inicio: '', termino: '' }]);
-  const [orcamento, setOrcamento] = useState(initialData?.orcamento || [{ categoria: 'Material de Consumo', descricao: '', qtd: 1, valor: 0 }]);
-  const [equipe, setEquipe] = useState<any[]>(initialData?.equipe || []);
+  const [cronograma, setCronograma] = useState(() => {
+    if (initialData?.cronograma_json) {
+      try { return JSON.parse(initialData.cronograma_json); } catch(e) {}
+    }
+    if (initialData?.cronograma) return initialData.cronograma;
+    return [{ atividade: '', inicio: '', termino: '' }];
+  });
+
+  const [orcamento, setOrcamento] = useState(() => {
+    if (initialData?.orcamento_json) {
+      try { return JSON.parse(initialData.orcamento_json); } catch(e) {}
+    }
+    if (initialData?.orcamento) return initialData.orcamento;
+    return [{ categoria: 'Material de Consumo', descricao: '', qtd: 1, valor: 0 }];
+  });
+
+  const [equipe, setEquipe] = useState<any[]>(() => {
+    if (initialData?.equipe_json) {
+      try { return JSON.parse(initialData.equipe_json); } catch(e) {}
+    }
+    if (initialData?.equipe) return initialData.equipe;
+    return [];
+  });
   const [files, setFiles] = useState<Record<string, File>>({});
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
 
@@ -51,15 +71,18 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
           if (data) {
             const profileData = { ...data, ...data.raw_data };
             setUserProfile(profileData);
-            if (!initialData || !initialData.equipe || initialData.equipe.length === 0) {
-              setEquipe([{
-                nome: profileData.nome,
-                cpf: profileData.cpf,
-                titulacao: profileData.titulacao || 'Não informada',
-                lattes: profileData.lattes || '',
-                papel: 'Líder'
-              }]);
-            }
+            setEquipe(prev => {
+              if (prev.length === 0) {
+                return [{
+                  nome: profileData.nome,
+                  cpf: profileData.cpf,
+                  titulacao: profileData.titulacao || 'Não informada',
+                  lattes: profileData.lattes || '',
+                  papel: 'Líder'
+                }];
+              }
+              return prev;
+            });
           }
         } catch (err) {
           console.error('Error fetching profile:', err);
@@ -147,13 +170,35 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
         uploadedDocs[key] = url;
       }
 
+      let existingDocs = {};
+      if (initialData?.anexos_json) {
+        try { existingDocs = JSON.parse(initialData.anexos_json); } catch(e) {}
+      }
+      const mergedDocs = { ...existingDocs, ...uploadedDocs };
+
+      let currentRawData = initialData?.raw_data || {};
+      if (initialData?.id) {
+        const { data: latestData } = await supabase.from('projects').select('raw_data').eq('id', initialData.id).single();
+        if (latestData) {
+          currentRawData = latestData.raw_data || {};
+        }
+      }
+
+      // Clear document statuses for newly uploaded documents
+      const documentStatuses = { ...(currentRawData.document_statuses || {}) };
+      for (const key of Object.keys(uploadedDocs)) {
+        delete documentStatuses[key];
+      }
+
       // Save project to Supabase
       const rawData = {
+        ...currentRawData,
         ...formData,
         cronograma_json: JSON.stringify(cronograma),
         orcamento_json: JSON.stringify(orcamento),
         equipe_json: JSON.stringify(equipe),
-        anexos_json: JSON.stringify(uploadedDocs),
+        anexos_json: JSON.stringify(mergedDocs),
+        document_statuses: documentStatuses
       };
 
       const projectData = {
@@ -509,7 +554,7 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
                       className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer w-full"
                     />
                   )}
-                  {(files[doc.id] || (initialData?.documentos_json && JSON.parse(initialData.documentos_json)[doc.id])) && (
+                  {(files[doc.id] || (initialData?.anexos_json && JSON.parse(initialData.anexos_json)[doc.id])) && (
                     <div className="absolute top-3 right-3 bg-green-100 text-green-600 p-1 rounded-full">
                       <Check className="w-4 h-4" />
                     </div>

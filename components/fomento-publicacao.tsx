@@ -23,7 +23,16 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
     const fetchProfile = async () => {
       if (user) {
         const { data } = await supabase.from('researchers').select('*').eq('id', user.id).single();
-        if (data) setUserProfile(data);
+        if (data) {
+          const profileData = { ...data, ...data.raw_data };
+          setUserProfile(profileData);
+          setAutores(prev => {
+            if (prev.length === 0) {
+              return [{ ...profileData, papel: 'Autor Principal' }];
+            }
+            return prev;
+          });
+        }
       }
     };
     fetchProfile();
@@ -37,7 +46,13 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
     moeda: initialData?.moeda || 'USD',
   });
 
-  const [autores, setAutores] = useState<any[]>(initialData?.autores || []);
+  const [autores, setAutores] = useState<any[]>(() => {
+    if (initialData?.autores_json) {
+      try { return JSON.parse(initialData.autores_json); } catch(e) {}
+    }
+    if (initialData?.autores) return initialData.autores;
+    return [];
+  });
   const [searchCpf, setSearchCpf] = useState('');
   const [searchResult, setSearchResult] = useState<any>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -47,16 +62,6 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
     artigo: null,
     resumo: null,
     aceite: null
-  });
-
-  // Initialize with current user as main author
-  useState(() => {
-    if (user && (!initialData || !initialData.autores || initialData.autores.length === 0)) {
-      const profile = getFromLocal('researchers', 'uid', user.id)[0];
-      if (profile) {
-        setAutores([{ ...profile, papel: 'Autor Principal' }]);
-      }
-    }
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -122,15 +127,30 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
     setLoading(true);
 
     try {
-      let artigo_url = '';
-      let resumo_url = '';
-      let aceite_url = '';
+      let artigo_url = initialData?.documentos?.artigo_url || '';
+      let resumo_url = initialData?.documentos?.resumo_url || '';
+      let aceite_url = initialData?.documentos?.aceite_url || '';
 
       if (files.artigo) artigo_url = await uploadToGoogleDrive(files.artigo, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
       if (files.resumo) resumo_url = await uploadToGoogleDrive(files.resumo, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
       if (files.aceite) aceite_url = await uploadToGoogleDrive(files.aceite, userProfile.nome, userProfile.cpf, GOOGLE_DRIVE_SCRIPT_URL);
 
+      let currentRawData = initialData?.raw_data || {};
+      if (initialData?.id) {
+        const { data: latestData } = await supabase.from('projects').select('raw_data').eq('id', initialData.id).single();
+        if (latestData) {
+          currentRawData = latestData.raw_data || {};
+        }
+      }
+
+      // Clear document statuses for newly uploaded documents
+      const documentStatuses = { ...(currentRawData.document_statuses || {}) };
+      if (files.artigo) delete documentStatuses['Artigo'];
+      if (files.resumo) delete documentStatuses['Resumo'];
+      if (files.aceite) delete documentStatuses['Carta de Aceite'];
+
       const rawData = {
+        ...currentRawData,
         ...formData,
         valor_apc: parseFloat(formData.valor_apc) || 0,
         autores,
@@ -138,13 +158,14 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
           artigo_url,
           resumo_url,
           aceite_url
-        }
+        },
+        document_statuses: documentStatuses
       };
 
       const projectData = {
         author_id: user.id,
         type: 'fomento_publicacao',
-        status: isDraft ? 'Rascunho' : 'Em Análise',
+        status: isDraft ? 'Rascunho' : (initialData?.status === 'Pendência' ? 'Em Análise' : 'Em Análise'),
         raw_data: rawData
       };
 
@@ -343,7 +364,7 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
                       />
                     </label>
                   )}
-                  {(files.artigo || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).artigo)) && (
+                  {(files.artigo || initialData?.documentos?.artigo_url) && (
                     <div className="mt-4 flex items-center gap-2 text-sm text-green-600 font-bold bg-green-50 px-4 py-2 rounded-full">
                       <Check className="w-4 h-4" /> {files.artigo?.name || 'artigo.pdf'}
                     </div>
@@ -370,7 +391,7 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
                     </label>
                   ) : (
                     <div className="text-primary text-sm font-bold flex items-center justify-between">
-                      {(files.resumo || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).resumo)) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
+                      {(files.resumo || initialData?.documentos?.resumo_url) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
                     </div>
                   )}
                 </div>
@@ -393,7 +414,7 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
                     </label>
                   ) : (
                     <div className="text-primary text-sm font-bold flex items-center justify-between">
-                      {(files.aceite || (initialData?.documentos_json && JSON.parse(initialData.documentos_json).aceite)) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
+                      {(files.aceite || initialData?.documentos?.aceite_url) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
                     </div>
                   )}
                 </div>
