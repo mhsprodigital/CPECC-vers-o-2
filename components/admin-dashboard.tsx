@@ -28,7 +28,8 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getFromLocal, saveToLocal, removeFromLocal } from '@/lib/local-storage';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 type AdminTab = 'overview' | 'submissions' | 'publications' | 'accountability' | 'team' | 'researchers';
 
@@ -64,15 +65,15 @@ export default function AdminDashboard() {
       read: false
     };
 
-    const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
-    const updatedRawData = { ...researcher.raw_data, mensagens: updatedMessages };
+    const updatedMessages = [...(researcher.mensagens || []), messageObj];
+    const updatedRawData = { ...researcher, mensagens: updatedMessages };
 
     try {
-      const { error } = await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', researcherId);
-      if (error) throw error;
-      setResearchers(prev => prev.map(r => r.id === researcherId ? { ...r, raw_data: updatedRawData } : r));
+      const docRef = doc(db, 'researchers', researcherId);
+      await updateDoc(docRef, updatedRawData);
+      setResearchers(prev => prev.map(r => r.id === researcherId ? { ...r, ...updatedRawData } : r));
       if (selectedResearcher?.id === researcherId) {
-        setSelectedResearcher((prev: any) => ({ ...prev, raw_data: updatedRawData }));
+        setSelectedResearcher((prev: any) => ({ ...prev, ...updatedRawData }));
       }
       setAdminNewMessage('');
       showToast('Mensagem enviada com sucesso.', 'success');
@@ -107,101 +108,88 @@ export default function AdminDashboard() {
       setLoading(true);
       try {
         // Fetch researchers
-        const { data: researchersData, error: researchersError } = await supabase
-          .from('researchers')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const researchersQuery = query(collection(db, 'researchers'));
+        const unsubscribeResearchers = onSnapshot(researchersQuery, (snapshot) => {
+          const researchersData = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+          setResearchers(researchersData);
           
-        if (researchersError) throw researchersError;
-        if (researchersData) setResearchers(researchersData);
-
-        // Fetch projects from Supabase
-        const { data: projectsData, error: projectsError } = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (projectsError) throw projectsError;
-
-        if (projectsData) {
-          setAllProjects(projectsData);
-          
-          const formattedSubmissions = projectsData
-            .filter(p => p.type === 'fomento_pesquisa')
-            .map(p => {
-              const researcher = researchersData?.find(r => r.id === p.author_id);
-              return {
-                id: p.id,
-                title: p.raw_data?.titulo || 'Sem título',
-                type: 'Fomento Pesquisa',
-                status: p.status,
-                createdAt: p.created_at,
-                researcherName: researcher?.nome || 'Desconhecido',
-                budget: p.raw_data?.orcamento_json ? {
-                  total: JSON.parse(p.raw_data.orcamento_json).reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0)
-                } : { total: 0 }
-              };
-            });
+          // Fetch projects
+          const projectsQuery = query(collection(db, 'projects'));
+          const unsubscribeProjects = onSnapshot(projectsQuery, (projSnapshot) => {
+            const projectsData = projSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+            setAllProjects(projectsData);
             
-          const formattedPublications = projectsData
-            .filter(p => p.type === 'fomento_publicacao')
-            .map(p => {
-              const researcher = researchersData?.find(r => r.id === p.author_id);
-              return {
-                id: p.id,
-                title: p.raw_data?.titulo || 'Sem título',
-                type: 'Fomento Publicação',
-                status: p.status,
-                createdAt: p.created_at,
-                researcherName: researcher?.nome || 'Desconhecido'
-              };
-            });
+            const formattedSubmissions = projectsData
+              .filter(p => p.type === 'fomento_pesquisa')
+              .map(p => {
+                const researcher = researchersData?.find(r => r.id === p.authorUid);
+                const rawData = JSON.parse(p.raw_data || '{}');
+                return {
+                  id: p.id,
+                  title: rawData.titulo || 'Sem título',
+                  type: 'Fomento Pesquisa',
+                  status: p.status,
+                  createdAt: p.createdAt,
+                  researcherName: researcher?.nome || 'Desconhecido',
+                  budget: rawData.orcamento_json ? {
+                    total: JSON.parse(rawData.orcamento_json).reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0)
+                  } : { total: 0 }
+                };
+              });
+              
+            const formattedPublications = projectsData
+              .filter(p => p.type === 'fomento_publicacao')
+              .map(p => {
+                const researcher = researchersData?.find(r => r.id === p.authorUid);
+                const rawData = JSON.parse(p.raw_data || '{}');
+                return {
+                  id: p.id,
+                  title: rawData.titulo || 'Sem título',
+                  type: 'Fomento Publicação',
+                  status: p.status,
+                  createdAt: p.createdAt,
+                  researcherName: researcher?.nome || 'Desconhecido'
+                };
+              });
 
-          setSubmissions(formattedSubmissions);
-          setPublications(formattedPublications);
-        }
+            setSubmissions(formattedSubmissions);
+            setPublications(formattedPublications);
+            setLoading(false);
+          }, (error) => {
+            console.error('Error fetching projects:', error);
+            setLoading(false);
+          });
+          
+          return () => unsubscribeProjects();
+        }, (error) => {
+          console.error('Error fetching researchers:', error);
+          setLoading(false);
+        });
         
+        // Load admins from Firestore
+        const adminDocRef = doc(db, 'system_config', 'admins');
+        getDoc(adminDocRef).then((docSnap) => {
+          if (docSnap.exists() && docSnap.data().admins) {
+            setAdmins(docSnap.data().admins);
+          } else {
+            // Fallback to local storage or default
+            const localAdmins = JSON.parse(localStorage.getItem('admins') || '[]');
+            if (localAdmins.length > 0) {
+              setAdmins(localAdmins);
+            } else {
+              setAdmins([{ username: 'admin', role: 'Diretoria', nome: 'Administrador Geral', cargo: 'Diretor', matricula: '000000' }]);
+            }
+          }
+        });
+
+        return () => unsubscribeResearchers();
       } catch (error) {
-        console.error('Error fetching data from Supabase:', error);
+        console.error('Error loading data:', error);
+        setLoading(false);
       }
-      
-      // Load admins from Supabase (special project entry)
-      const { data: adminConfig } = await supabase.from('projects').select('*').eq('id', 'system_config_admins').single();
-      if (adminConfig && adminConfig.raw_data?.admins) {
-        setAdmins(adminConfig.raw_data.admins);
-      } else {
-        // Fallback to local storage or default
-        const localAdmins = JSON.parse(localStorage.getItem('admins') || '[]');
-        if (localAdmins.length > 0) {
-          setAdmins(localAdmins);
-        } else {
-          setAdmins([{ username: 'admin', role: 'Diretoria', nome: 'Administrador Geral', cargo: 'Diretor', matricula: '000000' }]);
-        }
-      }
-      setLoading(false);
     };
-    
+
     loadData();
-
-    // Set up real-time subscriptions
-    const projectsSubscription = supabase
-      .channel('projects-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => {
-        loadData();
-      })
-      .subscribe();
-
-    const researchersSubscription = supabase
-      .channel('researchers-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'researchers' }, () => {
-        loadData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(projectsSubscription);
-      supabase.removeChannel(researchersSubscription);
-    };
   }, []);
 
   const handleAddAdmin = async (e: React.FormEvent) => {
@@ -210,13 +198,8 @@ export default function AdminDashboard() {
     setAdmins(updatedAdmins);
     
     try {
-      const { error } = await supabase.from('projects').upsert({
-        id: 'system_config_admins',
-        title: 'Configuração de Equipe',
-        status: 'System',
-        raw_data: { admins: updatedAdmins }
-      });
-      if (error) throw error;
+      const docRef = doc(db, 'system_config', 'admins');
+      await updateDoc(docRef, { admins: updatedAdmins });
       
       localStorage.setItem('admins', JSON.stringify(updatedAdmins));
       setNewAdmin({ username: '', password: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
@@ -236,13 +219,8 @@ export default function AdminDashboard() {
     setAdmins(updatedAdmins);
     
     try {
-      const { error } = await supabase.from('projects').upsert({
-        id: 'system_config_admins',
-        title: 'Configuração de Equipe',
-        status: 'System',
-        raw_data: { admins: updatedAdmins }
-      });
-      if (error) throw error;
+      const docRef = doc(db, 'system_config', 'admins');
+      await updateDoc(docRef, { admins: updatedAdmins });
       
       localStorage.setItem('admins', JSON.stringify(updatedAdmins));
       showToast('Colaborador removido.', 'success');
@@ -254,12 +232,8 @@ export default function AdminDashboard() {
 
   const handleUpdateResearcherStatus = async (id: string, newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from('researchers')
-        .update({ status: newStatus })
-        .eq('id', id);
-
-      if (error) throw error;
+      const docRef = doc(db, 'researchers', id);
+      await updateDoc(docRef, { status: newStatus });
 
       setResearchers(researchers.map(r => r.id === id ? { ...r, status: newStatus } : r));
       if (selectedResearcher && selectedResearcher.id === id) {
@@ -542,20 +516,16 @@ export default function AdminDashboard() {
     printWindow.document.close();
   };
 
-  const updateStatus = async (collection: string, id: string, status: string) => {
+  const updateStatus = async (collectionName: string, id: string, status: string) => {
     try {
-      // Update in Supabase
-      const { error } = await supabase
-        .from('projects')
-        .update({ status })
-        .eq('id', id);
+      // Update in Firestore
+      const docRef = doc(db, 'projects', id);
+      await updateDoc(docRef, { status });
         
-      if (error) throw error;
-      
       // Update local state
-      if (collection === 'submissions') {
+      if (collectionName === 'submissions') {
         setSubmissions(prev => prev.map(item => item.id === id ? { ...item, status } : item));
-      } else if (collection === 'publications') {
+      } else if (collectionName === 'publications') {
         setPublications(prev => prev.map(item => item.id === id ? { ...item, status } : item));
       }
       
@@ -569,16 +539,16 @@ export default function AdminDashboard() {
   const handleApproveDocument = async (id: string, isResearcher: boolean = false) => {
     try {
       if (isResearcher) {
-        const { error } = await supabase.from('researchers').update({ status: 'Ativo' }).eq('id', id);
-        if (error) throw error;
+        const docRef = doc(db, 'researchers', id);
+        await updateDoc(docRef, { status: 'Ativo' });
         setResearchers(prev => prev.map(r => r.id === id ? { ...r, status: 'Ativo' } : r));
         
         if (selectedResearcher?.id === id) {
           setSelectedResearcher((prev: any) => ({ ...prev, status: 'Ativo' }));
         }
       } else {
-        const { error } = await supabase.from('projects').update({ status: 'Aprovado' }).eq('id', id);
-        if (error) throw error;
+        const docRef = doc(db, 'projects', id);
+        await updateDoc(docRef, { status: 'Aprovado' });
         setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setPublications(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
@@ -606,12 +576,8 @@ export default function AdminDashboard() {
 
       const updatedRawData = { ...project.raw_data, despesas: updatedDespesas };
 
-      const { error } = await supabase
-        .from('projects')
-        .update({ raw_data: updatedRawData })
-        .eq('id', projectId);
-
-      if (error) throw error;
+      const docRef = doc(db, 'projects', projectId);
+      await updateDoc(docRef, { raw_data: JSON.stringify(updatedRawData) });
 
       setAllProjects(prev => prev.map(p => p.id === projectId ? { ...p, raw_data: updatedRawData } : p));
       
@@ -763,41 +729,43 @@ export default function AdminDashboard() {
         const researcher = researchers.find(r => r.id === id);
         if (!researcher) throw new Error('Researcher not found');
         
-        const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
-        const updatedRawData = { ...researcher.raw_data, rejection_message: message, allow_correction: allowCorrection, mensagens: updatedMessages };
+        const updatedMessages = [...(researcher.mensagens || []), messageObj];
+        const updatedRawData = { ...researcher, rejection_message: message, allow_correction: allowCorrection, mensagens: updatedMessages };
         
-        const { error } = await supabase.from('researchers').update({ 
+        const docRef = doc(db, 'researchers', id);
+        await updateDoc(docRef, { 
           status: newStatus,
-          raw_data: updatedRawData
-        }).eq('id', id);
-        if (error) throw error;
-        setResearchers(prev => prev.map(r => r.id === id ? { ...r, status: newStatus, raw_data: updatedRawData } : r));
+          ...updatedRawData
+        });
+        setResearchers(prev => prev.map(r => r.id === id ? { ...r, status: newStatus, ...updatedRawData } : r));
         
         if (selectedResearcher?.id === id) {
-          setSelectedResearcher((prev: any) => ({ ...prev, status: newStatus, raw_data: updatedRawData }));
+          setSelectedResearcher((prev: any) => ({ ...prev, status: newStatus, ...updatedRawData }));
         }
       } else {
         const project = allProjects.find(p => p.id === id);
         if (!project) throw new Error('Project not found');
 
         // Add message to researcher
-        const researcher = researchers.find(r => r.id === project.author_id);
+        const researcher = researchers.find(r => r.id === project.authorUid);
         if (researcher) {
-          const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
-          const updatedResearcherRawData = { ...researcher.raw_data, mensagens: updatedMessages };
-          await supabase.from('researchers').update({ raw_data: updatedResearcherRawData }).eq('id', researcher.id);
-          setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, raw_data: updatedResearcherRawData } : r));
+          const updatedMessages = [...(researcher.mensagens || []), messageObj];
+          const updatedResearcherRawData = { ...researcher, mensagens: updatedMessages };
+          const researcherDocRef = doc(db, 'researchers', researcher.id);
+          await updateDoc(researcherDocRef, updatedResearcherRawData);
+          setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, ...updatedResearcherRawData } : r));
         }
 
-        const updatedRawData = { ...project.raw_data, rejection_message: message, allow_correction: allowCorrection };
-        const { error } = await supabase.from('projects').update({ 
+        const rawData = JSON.parse(project.raw_data || '{}');
+        const updatedRawData = { ...rawData, rejection_message: message, allow_correction: allowCorrection };
+        const projectDocRef = doc(db, 'projects', id);
+        await updateDoc(projectDocRef, { 
           status: newStatus,
-          raw_data: updatedRawData
-        }).eq('id', id);
-        if (error) throw error;
-        setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
-        setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
-        setPublications(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: updatedRawData } : p));
+          raw_data: JSON.stringify(updatedRawData)
+        });
+        setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
+        setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
+        setPublications(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
         
         if (selectedAccountabilityProject?.id === id) {
           setSelectedAccountabilityProject((prev: any) => ({ ...prev, status: newStatus, raw_data: updatedRawData }));
@@ -948,16 +916,16 @@ export default function AdminDashboard() {
           updatedRawData.allow_correction = true;
         }
 
-        const { error } = await supabase.from('researchers').update({ 
-          raw_data: updatedRawData,
+        const docRef = doc(db, 'researchers', docObj.id);
+        await updateDoc(docRef, { 
+          ...updatedRawData,
           status: newResearcherStatus
-        }).eq('id', docObj.id);
-        if (error) throw error;
-        setResearchers(prev => prev.map(r => r.id === docObj.id ? { ...r, raw_data: updatedRawData, status: newResearcherStatus } : r));
+        });
+        setResearchers(prev => prev.map(r => r.id === docObj.id ? { ...r, ...updatedRawData, status: newResearcherStatus } : r));
         
         // Update selectedResearcher if it's the one being edited
         if (selectedResearcher?.id === docObj.id) {
-          setSelectedResearcher((prev: any) => ({ ...prev, raw_data: updatedRawData, status: newResearcherStatus }));
+          setSelectedResearcher((prev: any) => ({ ...prev, ...updatedRawData, status: newResearcherStatus }));
         }
       } else {
         // If status is Pendente, change to Em Análise for projects too
@@ -968,7 +936,7 @@ export default function AdminDashboard() {
           const messageObj = {
             id: Date.now().toString(),
             from: 'CPECC',
-            text: `Aviso de Rejeição no documento "${docName}" do projeto "${docObj.raw_data?.titulo || docObj.raw_data?.titulo_projeto}": ${message}`,
+            text: `Aviso de Rejeição no documento "${docName}" do projeto "${updatedRawData?.titulo || updatedRawData?.titulo_projeto}": ${message}`,
             date: new Date().toISOString(),
             read: false
           };
@@ -976,33 +944,34 @@ export default function AdminDashboard() {
           updatedRawData.rejection_message = `Documento "${docName}" rejeitado: ${message}`;
           updatedRawData.allow_correction = true;
           
-          const researcher = researchers.find(r => r.id === docObj.author_id);
+          const researcher = researchers.find(r => r.id === docObj.authorUid);
           if (researcher) {
-            const updatedMessages = [...(researcher.raw_data?.mensagens || []), messageObj];
-            const updatedResearcherRawData = { ...researcher.raw_data, mensagens: updatedMessages };
-            await supabase.from('researchers').update({ raw_data: updatedResearcherRawData }).eq('id', researcher.id);
-            setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, raw_data: updatedResearcherRawData } : r));
+            const updatedMessages = [...(researcher.mensagens || []), messageObj];
+            const updatedResearcherRawData = { ...researcher, mensagens: updatedMessages };
+            const researcherDocRef = doc(db, 'researchers', researcher.id);
+            await updateDoc(researcherDocRef, updatedResearcherRawData);
+            setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, ...updatedResearcherRawData } : r));
           }
         }
 
-        const { error } = await supabase.from('projects').update({ 
-          raw_data: updatedRawData,
+        const projectDocRef = doc(db, 'projects', docObj.id);
+        await updateDoc(projectDocRef, { 
+          raw_data: JSON.stringify(updatedRawData),
           status: newProjectStatus
-        }).eq('id', docObj.id);
-        if (error) throw error;
+        });
         
-        setAllProjects(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
-        setSubmissions(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
-        setPublications(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setAllProjects(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
+        setSubmissions(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
+        setPublications(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
         
         // Update selectedAccountabilityProject if it's the one being edited
         if (selectedAccountabilityProject?.id === docObj.id) {
-          setSelectedAccountabilityProject((prev: any) => ({ ...prev, raw_data: updatedRawData, status: newProjectStatus }));
+          setSelectedAccountabilityProject((prev: any) => ({ ...prev, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus }));
         }
       }
 
       // Update selected document state
-      setSelectedDocument({ ...docObj, raw_data: updatedRawData, status: (docObj.isResearcher || docObj.type) && docObj.status === 'Pendente' ? 'Em Análise' : docObj.status });
+      setSelectedDocument({ ...docObj, raw_data: JSON.stringify(updatedRawData), status: (docObj.isResearcher || docObj.type) && docObj.status === 'Pendente' ? 'Em Análise' : docObj.status });
       
       showToast(`Status do documento atualizado para ${newStatus}.`, 'success');
     } catch (error) {

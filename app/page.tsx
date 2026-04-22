@@ -7,7 +7,8 @@ import Onboarding from '@/components/onboarding';
 import Dashboard from '@/components/dashboard';
 import AdminDashboard from '@/components/admin-dashboard';
 import { seedMockData } from '@/lib/local-storage';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 export default function Home() {
   const { user, adminUser, loading } = useAuth();
@@ -20,16 +21,9 @@ export default function Home() {
     const checkProfile = async () => {
       if (user) {
         try {
-          const { data, error } = await supabase
-            .from('researchers')
-            .select('id')
-            .eq('id', user.id)
-            .single();
-            
-          if (error && error.code !== 'PGRST116') {
-            console.error('Error fetching profile:', error);
-          }
-          setHasProfile(!!data);
+          const docRef = doc(db, 'researchers', user.id);
+          const docSnap = await getDoc(docRef);
+          setHasProfile(docSnap.exists());
         } catch (error) {
           console.error('Error checking profile:', error);
           setHasProfile(false);

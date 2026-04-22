@@ -10,8 +10,8 @@ import Onboarding from './onboarding';
 import AcompanhamentoPublicacao from './acompanhamento-publicacao';
 import DossieProjeto from './dossie-projeto';
 import Picite from './picite';
-import { getFromLocal, getOneFromLocal, seedMockData } from '@/lib/local-storage';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 type ViewState = 'dashboard' | 'fomento-pesquisa' | 'fomento-publicacao' | 'profile' | 'acompanhamento-publicacao' | 'dossie-projeto' | 'picite';
 
@@ -43,11 +43,8 @@ export default function Dashboard() {
   const handleCancelProject = async () => {
     if (!projectToCancel) return;
     try {
-      const { error } = await supabase
-        .from('projects')
-        .update({ status: 'Cancelado pelo Pesquisador' })
-        .eq('id', projectToCancel);
-      if (error) throw error;
+      const docRef = doc(db, 'projects', projectToCancel);
+      await updateDoc(docRef, { status: 'Cancelado pelo Pesquisador' });
       setProjects(prev => prev.map(p => p.id === projectToCancel ? { ...p, status: 'Cancelado pelo Pesquisador' } : p));
       showToast('Submissão cancelada com sucesso.', 'success');
     } catch (err) {
@@ -60,81 +57,55 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (!user) return;
-      try {
-        // Fetch profile from Supabase
-        const { data: profileData, error: profileError } = await supabase
-          .from('researchers')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-
-        if (profileError && profileError.code !== 'PGRST116') {
-          console.error('Error fetching profile:', profileError);
-        } else if (profileData) {
-          // Merge raw_data with top level fields for compatibility, prioritizing top-level fields
-          setProfile({ ...profileData.raw_data, ...profileData });
-        }
-
-        // Fetch projects from Supabase
-        const { data: projectsData, error: projectsError } = await supabase
-          .from('projects')
-          .select('*')
-          .eq('author_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (projectsError) {
-          console.error('Error fetching projects:', projectsError);
-        } else if (projectsData) {
-          const formattedProjects = projectsData.map(p => ({
-            ...p.raw_data,
-            id: p.id,
-            type: p.type === 'fomento_pesquisa' ? 'Fomento à Pesquisa' : p.type === 'fomento_publicacao' ? 'Fomento para Publicação' : 'PICITE',
-            status: p.status,
-            createdAt: p.created_at,
-            raw_data: p.raw_data
-          }));
-          setProjects(formattedProjects);
-        }
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-
     if (!user) return;
 
     // Set up real-time subscriptions
-    const projectsSubscription = supabase
-      .channel('researcher-projects-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `author_id=eq.${user.id}` }, () => {
-        fetchData();
-      })
-      .subscribe();
+    const profileRef = doc(db, 'researchers', user.uid);
+    const unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setProfile({ ...data, id: docSnap.id });
+      } else {
+        setProfile(null);
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching profile:', error);
+      setLoading(false);
+    });
 
-    const profileSubscription = supabase
-      .channel('researcher-profile-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'researchers', filter: `id=eq.${user.id}` }, () => {
-        fetchData();
-      })
-      .subscribe();
+    const projectsQuery = query(collection(db, 'projects'), where('authorUid', '==', user.uid));
+    const unsubscribeProjects = onSnapshot(projectsQuery, (snapshot) => {
+      const formattedProjects = snapshot.docs.map(docSnap => {
+        const data = docSnap.data();
+        return {
+          ...JSON.parse(data.raw_data || '{}'),
+          id: docSnap.id,
+          type: data.type === 'fomento_pesquisa' ? 'Fomento à Pesquisa' : data.type === 'fomento_publicacao' ? 'Fomento para Publicação' : 'PICITE',
+          status: data.status,
+          createdAt: data.createdAt,
+          raw_data: JSON.parse(data.raw_data || '{}')
+        };
+      });
+      // Sort by createdAt descending manually since we can't easily do it with where without composite index
+      formattedProjects.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setProjects(formattedProjects);
+    }, (error) => {
+      console.error('Error fetching projects:', error);
+    });
 
     return () => {
-      supabase.removeChannel(projectsSubscription);
-      supabase.removeChannel(profileSubscription);
+      unsubscribeProfile();
+      unsubscribeProjects();
     };
-  }, [user, currentView]); // Refetch when view changes back to dashboard
+  }, [user]);
 
   const [showMessages, setShowMessages] = useState(false);
   const [newMessage, setNewMessage] = useState('');
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !profile) return;
+    if (!newMessage.trim() || !profile || !user) return;
 
     const messageObj = {
       id: Date.now().toString(),
@@ -145,12 +116,11 @@ export default function Dashboard() {
     };
 
     const updatedMessages = [...(profile.mensagens || []), messageObj];
-    const updatedRawData = { ...profile.raw_data, mensagens: updatedMessages };
+    const updatedRawData = { ...profile, mensagens: updatedMessages };
 
     try {
-      const { error } = await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', profile.id);
-      if (error) throw error;
-      setProfile({ ...profile, raw_data: updatedRawData, mensagens: updatedMessages });
+      const docRef = doc(db, 'researchers', user.uid);
+      await updateDoc(docRef, updatedRawData);
       setNewMessage('');
     } catch (err) {
       console.error('Error sending message:', err);
@@ -159,7 +129,7 @@ export default function Dashboard() {
   };
 
   const markMessagesAsRead = async () => {
-    if (!profile || !profile.mensagens) return;
+    if (!profile || !profile.mensagens || !user) return;
     
     let hasUnread = false;
     const updatedMessages = profile.mensagens.map((m: any) => {
@@ -171,10 +141,10 @@ export default function Dashboard() {
     });
 
     if (hasUnread) {
-      const updatedRawData = { ...profile.raw_data, mensagens: updatedMessages };
+      const updatedRawData = { ...profile, mensagens: updatedMessages };
       try {
-        await supabase.from('researchers').update({ raw_data: updatedRawData }).eq('id', profile.id);
-        setProfile({ ...profile, raw_data: updatedRawData, mensagens: updatedMessages });
+        const docRef = doc(db, 'researchers', user.uid);
+        await updateDoc(docRef, updatedRawData);
       } catch (err) {
         console.error('Error marking messages as read:', err);
       }
@@ -603,11 +573,8 @@ export default function Dashboard() {
                         onClick={async (e) => {
                           e.stopPropagation();
                           try {
-                            const { error } = await supabase
-                              .from('projects')
-                              .update({ status: 'Restauração Solicitada' })
-                              .eq('id', proj.id);
-                            if (error) throw error;
+                            const docRef = doc(db, 'projects', proj.id);
+                            await updateDoc(docRef, { status: 'Restauração Solicitada' });
                             setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, status: 'Restauração Solicitada' } : p));
                             showToast('Solicitação de restauração enviada com sucesso.', 'success');
                           } catch (err) {

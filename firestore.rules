@@ -33,6 +33,14 @@ service cloud.firestore {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "mhs.pro.digital@gmail.com" ||
+        (exists(/databases/$(database)/documents/system_config/admins) &&
+         request.auth.token.email in get(/databases/$(database)/documents/system_config/admins).data.emails)
+      );
+    }
+
     // ===============================================================
     // Domain Validators
     // ===============================================================
@@ -40,61 +48,49 @@ service cloud.firestore {
       return data.nome is string && data.nome.size() > 0 && data.nome.size() < 100 &&
              data.cpf is string && data.cpf.size() > 0 && data.cpf.size() < 20 &&
              data.email_inst is string && isValidEmail(data.email_inst) &&
-             (!('status' in data) || data.status in ['Pendente', 'Ativo', 'Inativo']);
+             (!('status' in data) || data.status in ['Pendente', 'Ativo', 'Inativo', 'Rejeitado', 'Pendência', 'Em Análise']);
     }
 
-    function isValidFomentoPesquisa(data) {
-      return data.titulo is string && data.titulo.size() > 0 && data.titulo.size() < 250 &&
-             data.authorUid is string && data.authorUid.size() > 0 &&
-             (!('status' in data) || data.status in ['Rascunho', 'Em Análise', 'Aprovado', 'Pendente']);
-    }
-
-    function isValidFomentoPublicacao(data) {
-      return data.titulo is string && data.titulo.size() > 0 && data.titulo.size() < 250 &&
-             data.authorUid is string && data.authorUid.size() > 0 &&
-             (!('status' in data) || data.status in ['Rascunho', 'Em Análise', 'Aprovado', 'Pendente']);
-    }
-
-    function isValidPICITE(data) {
-      return data.titulo_projeto is string && data.titulo_projeto.size() > 0 && data.titulo_projeto.size() < 250 &&
-             data.authorUid is string && data.authorUid.size() > 0 &&
-             (!('status' in data) || data.status in ['Rascunho', 'Em Análise', 'Aprovado', 'Pendente']);
+    function isValidProject(data) {
+      return data.authorUid is string && data.authorUid.size() > 0 &&
+             data.type in ['fomento_pesquisa', 'fomento_publicacao', 'picite'] &&
+             (!('status' in data) || data.status in ['Rascunho', 'Em Análise', 'Aprovado', 'Pendente', 'Rejeitado', 'Pendência', 'Cancelado pelo Pesquisador', 'Em Execução', 'Concluído']);
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
     match /researchers/{userId} {
-      allow read: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) && hasRequiredFields(['uid', 'nome', 'cpf', 'email_inst']) && isValidResearcherProfile(request.resource.data) && uidUnchanged();
-      allow update: if isOwner(userId) && isValidResearcherProfile(request.resource.data) && uidNotModified();
-      allow delete: if false; // Only admins or specific logic should delete
+      allow update: if isOwner(userId) && isValidResearcherProfile(request.resource.data) && uidNotModified() || isAdmin();
+      allow delete: if isAdmin();
     }
 
-    match /researchers_public/{userId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isOwner(userId) && request.resource.data.keys().hasOnly(['nome', 'cpf', 'titulacao', 'lattes']);
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid && hasRequiredFields(['authorUid', 'type', 'status', 'raw_data']) && isValidProject(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin()) && isValidProject(request.resource.data);
+      allow delete: if isAdmin();
     }
 
-    match /fomento_pesquisa/{projectId} {
-      allow read: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid && hasRequiredFields(['authorUid', 'titulo', 'status']) && isValidFomentoPesquisa(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.authorUid == request.auth.uid && request.resource.data.authorUid == request.auth.uid && isValidFomentoPesquisa(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.authorUid == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
     }
 
-    match /fomento_publicacao/{projectId} {
-      allow read: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid && hasRequiredFields(['authorUid', 'titulo', 'status']) && isValidFomentoPublicacao(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.authorUid == request.auth.uid && request.resource.data.authorUid == request.auth.uid && isValidFomentoPublicacao(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
+    match /signatures/{signatureId} {
+      allow read: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
-    match /picite/{projectId} {
-      allow read: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid && hasRequiredFields(['authorUid', 'titulo_projeto', 'status']) && isValidPICITE(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.authorUid == request.auth.uid && request.resource.data.authorUid == request.auth.uid && isValidPICITE(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.authorUid == request.auth.uid;
+    match /system_config/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

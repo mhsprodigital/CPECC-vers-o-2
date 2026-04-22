@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { ArrowLeft, FileText, Plus, TrendingUp, Landmark, CheckCircle2, AlertCircle, Eye, Download, Edit2, AlertTriangle, X, MessageSquare, Check, Upload, Clock } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { uploadToGoogleDrive } from '@/lib/google-drive';
 
@@ -16,8 +17,9 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
   useEffect(() => {
     const fetchProfile = async () => {
       if (user) {
-        const { data } = await supabase.from('researchers').select('*').eq('id', user.id).single();
-        if (data) setUserProfile(data);
+        const docRef = doc(db, 'researchers', user.id);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) setUserProfile(docSnap.data());
       }
     };
     fetchProfile();
@@ -103,17 +105,13 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
       
       const updatedDespesas = [expense, ...despesas];
       
-      const { error } = await supabase
-        .from('projects')
-        .update({
-          raw_data: {
-            ...rawData,
-            despesas: updatedDespesas
-          }
+      const docRef = doc(db, 'projects', data.id);
+      await updateDoc(docRef, {
+        raw_data: JSON.stringify({
+          ...rawData,
+          despesas: updatedDespesas
         })
-        .eq('id', data.id);
-        
-      if (error) throw error;
+      });
       
       setDespesas(updatedDespesas);
       showToast('Prestação de contas enviada com sucesso.', 'success');
@@ -148,17 +146,13 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
 
       const updatedRelatorios = [report, ...relatorios];
 
-      const { error } = await supabase
-        .from('projects')
-        .update({
-          raw_data: {
-            ...rawData,
-            relatorios: updatedRelatorios
-          }
+      const docRef = doc(db, 'projects', data.id);
+      await updateDoc(docRef, {
+        raw_data: JSON.stringify({
+          ...rawData,
+          relatorios: updatedRelatorios
         })
-        .eq('id', data.id);
-        
-      if (error) throw error;
+      });
       
       setRelatorios(updatedRelatorios);
       showToast('Relatório enviado com sucesso.', 'success');
@@ -176,21 +170,18 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
   const handleRequestExtension = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
-        .from('projects')
-        .update({
-          raw_data: {
-            ...rawData,
-            prorrogacao_solicitada: {
-              ...extensionRequest,
-              data: new Date().toISOString(),
-              status: 'Pendente'
-            }
+      const docRef = doc(db, 'projects', data.id);
+      await updateDoc(docRef, {
+        raw_data: JSON.stringify({
+          ...rawData,
+          prorrogacao_solicitada: {
+            ...extensionRequest,
+            data: new Date().toISOString(),
+            status: 'Pendente'
           }
         })
-        .eq('id', data.id);
+      });
         
-      if (error) throw error;
       showToast('Solicitação de prorrogação enviada com sucesso.', 'success');
       setIsExtensionModalOpen(false);
       // Update local state to reflect the change

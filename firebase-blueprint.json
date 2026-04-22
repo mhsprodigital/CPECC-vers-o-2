@@ -6,7 +6,7 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "User ID" },
-        "status": { "type": "string", "enum": ["Pendente", "Ativo", "Inativo"] },
+        "status": { "type": "string", "enum": ["Pendente", "Ativo", "Inativo", "Rejeitado", "Pendência", "Em Análise"] },
         "nome": { "type": "string" },
         "cpf": { "type": "string" },
         "nascimento": { "type": "string" },
@@ -57,82 +57,57 @@
         "detalhes_atuacao": { "type": "string" },
         "grupo_cnpq": { "type": "string" },
         "documentos_json": { "type": "string" },
+        "document_statuses": { "type": "string" },
+        "rejection_message": { "type": "string" },
+        "allow_correction": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "nome", "cpf", "email_inst"]
     },
-    "ResearcherPublicProfile": {
-      "title": "Researcher Public Profile",
-      "description": "Public profile data for team search",
-      "type": "object",
-      "properties": {
-        "nome": { "type": "string" },
-        "cpf": { "type": "string" },
-        "titulacao": { "type": "string" },
-        "lattes": { "type": "string" }
-      },
-      "required": ["nome", "cpf"]
-    },
-    "FomentoPesquisa": {
-      "title": "Fomento à Pesquisa",
-      "description": "Research funding project submission",
+    "Project": {
+      "title": "Project",
+      "description": "A project submitted by a researcher (Fomento à Pesquisa, Fomento para Publicação, or PICITE)",
       "type": "object",
       "properties": {
         "authorUid": { "type": "string" },
-        "titulo": { "type": "string" },
-        "resumo": { "type": "string" },
-        "metodologia": { "type": "string" },
-        "cronograma_json": { "type": "string" },
-        "orcamento_json": { "type": "string" },
-        "equipe_json": { "type": "string" },
-        "anexos_json": { "type": "string" },
-        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
+        "type": { "type": "string", "enum": ["fomento_pesquisa", "fomento_publicacao", "picite"] },
+        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente", "Rejeitado", "Pendência", "Cancelado pelo Pesquisador", "Em Execução", "Concluído"] },
+        "raw_data": { "type": "string", "description": "JSON string containing project specific data" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["authorUid", "titulo", "status"]
+      "required": ["authorUid", "type", "status", "raw_data"]
     },
-    "FomentoPublicacao": {
-      "title": "Fomento para Publicação",
-      "description": "Publication funding project submission",
+    "Message": {
+      "title": "Message",
+      "description": "A message between CPECC and a researcher",
       "type": "object",
       "properties": {
         "authorUid": { "type": "string" },
-        "titulo": { "type": "string" },
-        "revista": { "type": "string" },
-        "qualis": { "type": "string" },
-        "valor_apc": { "type": "number" },
-        "moeda": { "type": "string" },
-        "resumo": { "type": "string" },
-        "carta_aceite_url": { "type": "string" },
-        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "projectId": { "type": "string" },
+        "from": { "type": "string" },
+        "text": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["authorUid", "titulo", "status"]
+      "required": ["authorUid", "from", "text", "read"]
     },
-    "PICITE": {
-      "title": "PICITE",
-      "description": "Scientific initiation project submission",
+    "Signature": {
+      "title": "Signature",
+      "description": "A document signature",
       "type": "object",
       "properties": {
         "authorUid": { "type": "string" },
-        "titulo_projeto": { "type": "string" },
-        "nome_estudante": { "type": "string" },
-        "cpf_estudante": { "type": "string" },
-        "email_estudante": { "type": "string" },
-        "curso": { "type": "string" },
-        "natureza_vinculo": { "type": "string" },
-        "plano_trabalho_url": { "type": "string" },
-        "banco_estudante": { "type": "string" },
-        "agencia_estudante": { "type": "string" },
-        "conta_estudante": { "type": "string" },
-        "status": { "type": "string", "enum": ["Rascunho", "Em Análise", "Aprovado", "Pendente"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "projectId": { "type": "string" },
+        "documentName": { "type": "string" },
+        "documentUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Aprovado", "Rejeitado"] },
+        "rejectionMessage": { "type": "string" },
+        "signedBy": { "type": "string" },
+        "signedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["authorUid", "titulo_projeto", "status"]
+      "required": ["authorUid", "documentName", "status"]
     }
   },
   "firestore": {
@@ -140,21 +115,17 @@
       "schema": { "$ref": "#/entities/ResearcherProfile" },
       "description": "Profiles of researchers"
     },
-    "/researchers_public/{userId}": {
-      "schema": { "$ref": "#/entities/ResearcherPublicProfile" },
-      "description": "Public profiles of researchers for team search"
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "All projects"
     },
-    "/fomento_pesquisa/{projectId}": {
-      "schema": { "$ref": "#/entities/FomentoPesquisa" },
-      "description": "Research funding projects"
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "All messages"
     },
-    "/fomento_publicacao/{projectId}": {
-      "schema": { "$ref": "#/entities/FomentoPublicacao" },
-      "description": "Publication funding projects"
-    },
-    "/picite/{projectId}": {
-      "schema": { "$ref": "#/entities/PICITE" },
-      "description": "Scientific initiation projects"
+    "/signatures/{signatureId}": {
+      "schema": { "$ref": "#/entities/Signature" },
+      "description": "All document signatures"
     }
   }
 }

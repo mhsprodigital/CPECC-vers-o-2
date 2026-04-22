@@ -1,8 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { User, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
@@ -43,12 +44,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     checkAdminSession();
 
-    // Fetch admins from Supabase for login validation
+    // Fetch admins from Firestore for login validation
     const fetchAdmins = async () => {
       try {
-        const { data } = await supabase.from('projects').select('*').eq('id', 'system_config_admins').single();
-        if (data && data.raw_data?.admins) {
-          setAdminsList(data.raw_data.admins);
+        const docRef = doc(db, 'system_config', 'admins');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().admins) {
+          setAdminsList(docSnap.data().admins);
         }
       } catch (e) {
         console.error('Error fetching admins for login:', e);
@@ -56,32 +58,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
     fetchAdmins();
 
-    // Supabase Auth Listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setUser(session?.user ?? null);
-        setLoading(false);
-      }
-    );
-
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    // Firebase Auth Listener
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
       setLoading(false);
     });
 
     return () => {
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, []);
 
   const signInWithPassword = async (email: string, pass: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password: pass,
-      });
-      if (error) throw error;
+      await signInWithEmailAndPassword(auth, email, pass);
       return true;
     } catch (error) {
       console.error('Error signing in with Password', error);
@@ -91,11 +81,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signUp = async (email: string, pass: string) => {
     try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password: pass,
-      });
-      if (error) throw error;
+      await createUserWithEmailAndPassword(auth, email, pass);
       return true;
     } catch (error) {
       console.error('Error signing up', error);
@@ -121,7 +107,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         localStorage.removeItem('adminSession');
       }
       
-      await supabase.auth.signOut();
+      await signOut(auth);
     } catch (error) {
       console.error('Error signing out', error);
     }

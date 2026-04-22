@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { Check, ChevronRight, ChevronLeft, Upload, Home } from 'lucide-react';
 import { formatCPF, formatPhone, formatCEP } from '@/lib/formatters';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { uploadToGoogleDrive } from '@/lib/google-drive';
 
 const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
@@ -173,8 +174,11 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
       // Save profile to Supabase
       // Fetch latest data to prevent overwriting messages or other admin updates
-      const { data: latestData } = await supabase.from('researchers').select('raw_data, status').eq('id', user.id).single();
-      const currentRawData = latestData?.raw_data || initialData || {};
+      const docRef = doc(db, 'researchers', user.id);
+      const docSnap = await getDoc(docRef);
+      const latestData = docSnap.exists() ? docSnap.data() : null;
+      
+      const currentRawData = latestData || initialData || {};
       const currentStatus = latestData?.status || initialData?.status || 'Ativo';
 
       // Clear document statuses for newly uploaded documents
@@ -195,20 +199,16 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       const hasNewDocs = Object.keys(uploadedDocs).length > 0;
       const newStatus = hasNewDocs ? 'Pendente' : currentStatus;
 
-      const { error } = await supabase
-        .from('researchers')
-        .upsert({
-          id: user.id,
-          nome: formData.nome || '',
-          cpf: formData.cpf || '',
-          email_inst: formData.email_inst || '',
-          titulacao: formData.titulacao || '',
-          lattes: formData.lattes || '',
-          status: newStatus,
-          raw_data: rawData
-        });
-
-      if (error) throw error;
+      await setDoc(docRef, {
+        id: user.id,
+        nome: formData.nome || '',
+        cpf: formData.cpf || '',
+        email_inst: formData.email_inst || '',
+        titulacao: formData.titulacao || '',
+        lattes: formData.lattes || '',
+        status: newStatus,
+        ...rawData
+      }, { merge: true });
 
       onComplete();
     } catch (error) {

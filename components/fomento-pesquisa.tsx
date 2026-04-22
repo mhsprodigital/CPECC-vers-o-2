@@ -5,7 +5,8 @@ import { useAuth } from '@/lib/auth-context';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Upload, Check, Search, Edit2, FileText, AlertCircle } from 'lucide-react';
 import { saveToLocal, getFromLocal, getOneFromLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
-import { supabase } from '@/lib/supabase';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { uploadToGoogleDrive } from '@/lib/google-drive';
 
 const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
@@ -62,13 +63,11 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
     const fetchProfile = async () => {
       if (user) {
         try {
-          const { data, error } = await supabase
-            .from('researchers')
-            .select('*')
-            .eq('id', user.id)
-            .single();
+          const docRef = doc(db, 'researchers', user.id);
+          const docSnap = await getDoc(docRef);
             
-          if (data) {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
             const profileData = { ...data, ...data.raw_data };
             setUserProfile(profileData);
             setEquipe(prev => {
@@ -178,9 +177,10 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
 
       let currentRawData = initialData?.raw_data || {};
       if (initialData?.id) {
-        const { data: latestData } = await supabase.from('projects').select('raw_data').eq('id', initialData.id).single();
-        if (latestData) {
-          currentRawData = latestData.raw_data || {};
+        const docRef = doc(db, 'projects', initialData.id);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().raw_data) {
+          currentRawData = JSON.parse(docSnap.data().raw_data);
         }
       }
 
@@ -202,27 +202,20 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
       };
 
       const projectData = {
-        author_id: user.id,
+        authorUid: user.id,
         type: 'fomento_pesquisa',
         status: isDraft ? 'Rascunho' : 'Em Análise',
-        raw_data: rawData
+        raw_data: JSON.stringify(rawData),
+        createdAt: new Date().toISOString()
       };
 
-      let error;
       if (initialData?.id) {
-        const { error: updateError } = await supabase
-          .from('projects')
-          .update(projectData)
-          .eq('id', initialData.id);
-        error = updateError;
+        const docRef = doc(db, 'projects', initialData.id);
+        await updateDoc(docRef, projectData);
       } else {
-        const { error: insertError } = await supabase
-          .from('projects')
-          .insert(projectData);
-        error = insertError;
+        const newDocRef = doc(collection(db, 'projects'));
+        await setDoc(newDocRef, projectData);
       }
-
-      if (error) throw error;
       
       showToast(isDraft ? 'Rascunho salvo com sucesso!' : 'Projeto submetido com sucesso!', 'success');
       setTimeout(() => {
