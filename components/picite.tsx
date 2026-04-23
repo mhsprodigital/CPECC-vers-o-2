@@ -20,7 +20,7 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
   useEffect(() => {
     const fetchProfile = async () => {
       if (user) {
-        const docRef = doc(db, 'researchers', user.id);
+        const docRef = doc(db, 'researchers', user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) setUserProfile(docSnap.data());
       }
@@ -106,7 +106,7 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
       } else {
         const newDocRef = doc(collection(db, 'projects'));
         await setDoc(newDocRef, {
-          authorUid: user.id,
+          authorUid: user.uid,
           type: 'picite',
           status: 'Pendente',
           raw_data: JSON.stringify(rawData),

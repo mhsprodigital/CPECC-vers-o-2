@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth-context';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Upload, Check, Search, Edit2, FileText, AlertCircle } from 'lucide-react';
 import { saveToLocal, getFromLocal, getOneFromLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { uploadToGoogleDrive } from '@/lib/google-drive';
 
@@ -63,7 +63,7 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
     const fetchProfile = async () => {
       if (user) {
         try {
-          const docRef = doc(db, 'researchers', user.id);
+          const docRef = doc(db, 'researchers', user.uid);
           const docSnap = await getDoc(docRef);
             
           if (docSnap.exists()) {
@@ -202,7 +202,7 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
       };
 
       const projectData = {
-        authorUid: user.id,
+        authorUid: user.uid,
         type: 'fomento_pesquisa',
         status: isDraft ? 'Rascunho' : 'Em Análise',
         raw_data: JSON.stringify(rawData),

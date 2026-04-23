@@ -120,9 +120,9 @@ export default function AdminDashboard() {
             setAllProjects(projectsData);
             
             const formattedSubmissions = projectsData
-              .filter(p => p.type === 'fomento_pesquisa')
-              .map(p => {
-                const researcher = researchersData?.find(r => r.id === p.authorUid);
+              .filter((p: any) => p.type === 'fomento_pesquisa')
+              .map((p: any) => {
+                const researcher = researchersData?.find((r: any) => r.id === p.authorUid);
                 const rawData = JSON.parse(p.raw_data || '{}');
                 return {
                   id: p.id,
@@ -130,7 +130,7 @@ export default function AdminDashboard() {
                   type: 'Fomento Pesquisa',
                   status: p.status,
                   createdAt: p.createdAt,
-                  researcherName: researcher?.nome || 'Desconhecido',
+                  researcherName: (researcher as any)?.nome || 'Desconhecido',
                   budget: rawData.orcamento_json ? {
                     total: JSON.parse(rawData.orcamento_json).reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0)
                   } : { total: 0 }
@@ -138,9 +138,9 @@ export default function AdminDashboard() {
               });
               
             const formattedPublications = projectsData
-              .filter(p => p.type === 'fomento_publicacao')
-              .map(p => {
-                const researcher = researchersData?.find(r => r.id === p.authorUid);
+              .filter((p: any) => p.type === 'fomento_publicacao')
+              .map((p: any) => {
+                const researcher = researchersData?.find((r: any) => r.id === p.authorUid);
                 const rawData = JSON.parse(p.raw_data || '{}');
                 return {
                   id: p.id,
@@ -148,7 +148,7 @@ export default function AdminDashboard() {
                   type: 'Fomento Publicação',
                   status: p.status,
                   createdAt: p.createdAt,
-                  researcherName: researcher?.nome || 'Desconhecido'
+                  researcherName: (researcher as any)?.nome || 'Desconhecido'
                 };
               });
 

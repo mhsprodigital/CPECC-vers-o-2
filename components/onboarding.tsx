@@ -24,7 +24,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState<any>(initialData || {
-    nome: user?.user_metadata?.full_name || '',
+    nome: (user as any)?.user_metadata?.full_name || '',
     email_inst: user?.email || '',
   });
   const [historicoFormacao, setHistoricoFormacao] = useState<any[]>(initialData?.historico_formacao || []);
@@ -157,7 +157,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       for (const [key, file] of Object.entries(files)) {
         const url = await uploadToGoogleDrive(
           file,
-          formData.nome || user.user_metadata?.full_name || 'Pesquisador',
+          formData.nome || (user as any).user_metadata?.full_name || 'Pesquisador',
           formData.cpf || 'Sem_CPF',
           GOOGLE_DRIVE_SCRIPT_URL
         );
@@ -174,7 +174,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
       // Save profile to Supabase
       // Fetch latest data to prevent overwriting messages or other admin updates
-      const docRef = doc(db, 'researchers', user.id);
+      const docRef = doc(db, 'researchers', user.uid);
       const docSnap = await getDoc(docRef);
       const latestData = docSnap.exists() ? docSnap.data() : null;
       
@@ -200,7 +200,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       const newStatus = hasNewDocs ? 'Pendente' : currentStatus;
 
       await setDoc(docRef, {
-        id: user.id,
+        id: user.uid,
         nome: formData.nome || '',
         cpf: formData.cpf || '',
         email_inst: formData.email_inst || '',

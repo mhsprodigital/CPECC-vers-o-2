@@ -23,7 +23,7 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
   useEffect(() => {
     const fetchProfile = async () => {
       if (user) {
-        const docRef = doc(db, 'researchers', user.id);
+        const docRef = doc(db, 'researchers', user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
@@ -167,7 +167,7 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
       };
 
       const projectData = {
-        authorUid: user.id,
+        authorUid: user.uid,
         type: 'fomento_publicacao',
         status: isDraft ? 'Rascunho' : (initialData?.status === 'Pendência' ? 'Em Análise' : 'Em Análise'),
         raw_data: JSON.stringify(rawData),

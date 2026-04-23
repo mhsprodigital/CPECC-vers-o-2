@@ -17,7 +17,7 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
   useEffect(() => {
     const fetchProfile = async () => {
       if (user) {
-        const docRef = doc(db, 'researchers', user.id);
+        const docRef = doc(db, 'researchers', user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) setUserProfile(docSnap.data());
       }

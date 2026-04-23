@@ -21,7 +21,7 @@ export default function Home() {
     const checkProfile = async () => {
       if (user) {
         try {
-          const docRef = doc(db, 'researchers', user.id);
+          const docRef = doc(db, 'researchers', user.uid);
           const docSnap = await getDoc(docRef);
           setHasProfile(docSnap.exists());
         } catch (error) {
