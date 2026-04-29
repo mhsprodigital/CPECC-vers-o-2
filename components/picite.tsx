@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { ArrowLeft, Check, Upload, Trash2, Plus } from 'lucide-react';
+import { ArrowLeft, Check, Upload } from 'lucide-react';
 import { saveToLocal } from '@/lib/local-storage';
 import { formatCPF } from '@/lib/formatters';
 import { doc, getDoc, setDoc, updateDoc, collection } from 'firebase/firestore';
@@ -82,19 +82,6 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
     justificativa_substituicao: initialData?.raw_data?.justificativa_substituicao || '',
   });
 
-  const [estudantes, setEstudantes] = useState<any[]>(
-    initialData?.raw_data?.estudantes || [{
-      nome: initialData?.raw_data?.nome_estudante || '',
-      cpf: initialData?.raw_data?.cpf_estudante || '',
-      email: initialData?.raw_data?.email_estudante || '',
-      curso: initialData?.raw_data?.curso || 'Medicina (ESCS)',
-      modalidade_bolsa: initialData?.raw_data?.modalidade_bolsa || 'PIC (ESCS)',
-      banco: initialData?.raw_data?.banco_estudante || '',
-      agencia: initialData?.raw_data?.agencia_estudante || '',
-      conta: initialData?.raw_data?.conta_estudante || '',
-    }]
-  );
-
   const [files, setFiles] = useState<{ [key: string]: File | null }>({});
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -108,24 +95,6 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
     }
 
     setFormData(prev => ({ ...prev, [name]: formattedValue }));
-  };
-
-  const handleEstudanteChange = (index: number, e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    let formattedValue = value;
-    if (name === 'cpf') formattedValue = formatCPF(value);
-    
-    const newEstudantes = [...estudantes];
-    newEstudantes[index] = { ...newEstudantes[index], [name]: formattedValue };
-    setEstudantes(newEstudantes);
-  };
-
-  const addEstudante = () => {
-    setEstudantes([...estudantes, { nome: '', cpf: '', email: '', curso: 'Medicina (ESCS)', modalidade_bolsa: 'PIC (ESCS)', banco: '', agencia: '', conta: '' }]);
-  };
-
-  const removeEstudante = (index: number) => {
-    setEstudantes(estudantes.filter((_, i) => i !== index));
   };
 
   const handleFileChange = (docName: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,7 +150,6 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
       const rawData = {
         ...currentRawData,
         ...formData,
-        estudantes,
         plano_trabalho_url,
         seguro_url,
         termo_compromisso_url,
@@ -192,19 +160,11 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
         document_statuses: documentStatuses
       };
 
-      for (let i = 0; i < estudantes.length; i++) {
-        const est = estudantes[i];
-        const isBolsista = est.modalidade_bolsa !== 'Participação Voluntária';
-        if (isBolsista && (!est.banco || !est.agencia || !est.conta)) {
-          showToast(`Dados bancários são obrigatórios para bolsistas (Estudante ${i + 1}).`, 'error');
-          setLoading(false);
-          return;
-        }
-        if (!est.nome || !est.cpf || !est.email) {
-          showToast(`Preencha todos os dados básicos do estudante ${i + 1}.`, 'error');
-          setLoading(false);
-          return;
-        }
+      const isBolsista = formData.modalidade_bolsa !== 'Participação Voluntária';
+      if (isBolsista && (!formData.banco_estudante || !formData.agencia_estudante || !formData.conta_estudante)) {
+        showToast('Dados bancários são obrigatórios para bolsistas.', 'error');
+        setLoading(false);
+        return;
       }
 
       if (initialData?.id) {
@@ -212,7 +172,6 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
         const hasNewFiles = Object.keys(files).length > 0;
         await updateDoc(docRef, {
           status: hasNewFiles ? 'Pendente' : (initialData.status === 'Pendência' ? 'Pendente' : initialData.status),
-          participantEmails: estudantes.map(e => e.email).filter(Boolean),
           raw_data: JSON.stringify(rawData)
         });
 
@@ -221,7 +180,6 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
         const newDocRef = doc(collection(db, 'projects'));
         await setDoc(newDocRef, {
           authorUid: user.uid,
-          participantEmails: estudantes.map(e => e.email).filter(Boolean),
           type: 'picite',
           status: 'Pendente',
           raw_data: JSON.stringify(rawData),
@@ -304,82 +262,60 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
           </div>
 
           <div className="md:col-span-2 mt-6">
-            <h3 className="font-bold text-lg text-primary border-b border-outline-variant pb-2 mb-4">Dados Complementares dos Estudantes</h3>
-            {estudantes.map((estudante, index) => (
-              <div key={index} className="mb-8 p-6 bg-surface-container-lowest border border-outline-variant rounded-xl relative">
-                <div className="flex justify-between items-center mb-4">
-                  <h4 className="font-bold text-md text-on-surface">Estudante {index + 1}</h4>
-                  {index > 0 && !readOnly && (
-                    <button type="button" onClick={() => removeEstudante(index)} className="text-error hover:bg-error/10 p-2 rounded-lg transition-colors flex items-center gap-1 text-sm font-bold">
-                      <Trash2 className="w-4 h-4" /> Remover
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="label-text">Nome do Estudante</label>
-                    <input type="text" name="nome" value={estudante.nome} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="Nome completo" required disabled={readOnly} />
-                  </div>
-                  <div>
-                    <label className="label-text">CPF do Estudante</label>
-                    <input type="text" name="cpf" value={estudante.cpf} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="000.000.000-00" required disabled={readOnly} />
-                  </div>
-                  <div>
-                    <label className="label-text">E-mail do Estudante</label>
-                    <input type="email" name="email" value={estudante.email} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="email@exemplo.com" required disabled={readOnly} />
-                  </div>
-                  <div>
-                    <label className="label-text">Curso e Instituição</label>
-                    <select name="curso" value={estudante.curso} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" required disabled={readOnly}>
-                      <option value="Medicina (ESCS)">Medicina (ESCS)</option>
-                      <option value="Enfermagem (ESCS)">Enfermagem (ESCS)</option>
-                      <option value="Escolas Técnicas de Saúde (SES-DF)">Escolas Técnicas de Saúde (SES-DF)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label-text">Modalidade de Bolsa</label>
-                    <select name="modalidade_bolsa" value={estudante.modalidade_bolsa} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" required disabled={readOnly}>
-                      <option value="PIC (ESCS)">PIC (ESCS)</option>
-                      <option value="PIC-Af (Ações Afirmativas)">PIC-Af (Ações Afirmativas)</option>
-                      <option value="PIBIC (CNPq)">PIBIC (CNPq)</option>
-                      <option value="PIBIC-Af">PIBIC-Af</option>
-                      <option value="Participação Voluntária">Participação Voluntária</option>
-                    </select>
-                  </div>
-                </div>
-
-                {estudante.modalidade_bolsa !== 'Participação Voluntária' && (
-                  <div className="mt-4 pt-4 border-t border-outline-variant/30">
-                    <h3 className="font-bold text-sm mb-2 text-on-surface-variant">Dados Bancários (Obrigatório)</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="label-text">Banco</label>
-                        <input type="text" name="banco" value={estudante.banco} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="Ex: Banco do Brasil" required disabled={readOnly} />
-                      </div>
-                      <div>
-                        <label className="label-text">Agência</label>
-                        <input type="text" name="agencia" value={estudante.agencia} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="0000-0" required disabled={readOnly} />
-                      </div>
-                      <div>
-                        <label className="label-text">Conta</label>
-                        <input type="text" name="conta" value={estudante.conta} onChange={(e) => handleEstudanteChange(index, e)} className="input-field" placeholder="00000-0" required disabled={readOnly} />
-                      </div>
-                    </div>
-                  </div>
-                )}
+            <h3 className="font-bold text-lg text-primary border-b border-outline-variant pb-2 mb-4">Dados Complementares do Aluno</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="label-text">Nome do Estudante</label>
+                <input type="text" name="nome_estudante" value={formData.nome_estudante} onChange={handleInputChange} className="input-field" placeholder="Nome completo" required disabled={readOnly} />
               </div>
-            ))}
-            
-            {!readOnly && (
-              <button 
-                type="button" 
-                onClick={addEstudante}
-                className="w-full py-4 border-2 border-dashed border-primary/30 rounded-xl text-primary font-bold hover:bg-primary/5 transition-colors flex justify-center items-center gap-2"
-              >
-                + Adicionar Outro Estudante
-              </button>
-            )}
+              <div>
+                <label className="label-text">CPF do Estudante</label>
+                <input type="text" name="cpf_estudante" value={formData.cpf_estudante} onChange={handleInputChange} className="input-field" placeholder="000.000.000-00" required disabled={readOnly} />
+              </div>
+              <div>
+                <label className="label-text">E-mail do Estudante</label>
+                <input type="email" name="email_estudante" value={formData.email_estudante} onChange={handleInputChange} className="input-field" placeholder="email@exemplo.com" required disabled={readOnly} />
+              </div>
+              <div>
+                <label className="label-text">Curso e Instituição</label>
+                <select name="curso" value={formData.curso} onChange={handleInputChange} className="input-field" required disabled={readOnly}>
+                  <option value="Medicina (ESCS)">Medicina (ESCS)</option>
+                  <option value="Enfermagem (ESCS)">Enfermagem (ESCS)</option>
+                  <option value="Escolas Técnicas de Saúde (SES-DF)">Escolas Técnicas de Saúde (SES-DF)</option>
+                </select>
+              </div>
+              <div>
+                <label className="label-text">Modalidade de Bolsa</label>
+                <select name="modalidade_bolsa" value={formData.modalidade_bolsa} onChange={handleInputChange} className="input-field" required disabled={readOnly}>
+                  <option value="PIC (ESCS)">PIC (ESCS)</option>
+                  <option value="PIC-Af (Ações Afirmativas)">PIC-Af (Ações Afirmativas)</option>
+                  <option value="PIBIC (CNPq)">PIBIC (CNPq)</option>
+                  <option value="PIBIC-Af">PIBIC-Af</option>
+                  <option value="Participação Voluntária">Participação Voluntária</option>
+                </select>
+              </div>
+            </div>
           </div>
+
+          {formData.modalidade_bolsa !== 'Participação Voluntária' && (
+            <div className="md:col-span-2">
+              <h3 className="font-bold text-sm mt-4 mb-2">Dados Bancários do Estudante (Obrigatório)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="label-text">Banco</label>
+                  <input type="text" name="banco_estudante" value={formData.banco_estudante} onChange={handleInputChange} className="input-field" placeholder="Ex: Banco do Brasil" required disabled={readOnly} />
+                </div>
+                <div>
+                  <label className="label-text">Agência</label>
+                  <input type="text" name="agencia_estudante" value={formData.agencia_estudante} onChange={handleInputChange} className="input-field" placeholder="0000-0" required disabled={readOnly} />
+                </div>
+                <div>
+                  <label className="label-text">Conta</label>
+                  <input type="text" name="conta_estudante" value={formData.conta_estudante} onChange={handleInputChange} className="input-field" placeholder="00000-0" required disabled={readOnly} />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="md:col-span-2">
             <h3 className="font-bold text-lg text-primary border-b border-outline-variant pb-2 mb-4 mt-6">Substituição do Bolsista</h3>
@@ -480,7 +416,7 @@ export default function Picite({ onBack, initialData, readOnly }: { onBack: () =
               </div>
               
               {/* Conditional Docs for Ações Afirmativas / PcD */}
-              {estudantes.some(e => e.modalidade_bolsa && e.modalidade_bolsa.includes('Af')) && (
+              {formData.modalidade_bolsa.includes('Af') && (
                 <div className={`border border-outline-variant rounded-xl bg-surface-container-lowest p-6 flex flex-col items-center justify-center text-center transition-colors relative ${readOnly ? 'opacity-70' : 'hover:border-primary/50'}`}>
                   <Upload className="w-8 h-8 text-primary mb-3 opacity-50" />
                   <h4 className="font-bold text-on-surface mb-1">Documentações Afirmativas</h4>

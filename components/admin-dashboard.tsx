@@ -181,7 +181,7 @@ export default function AdminDashboard() {
                 const rawData = typeof p.raw_data === 'string' ? JSON.parse(p.raw_data || '{}') : (p.raw_data || {});
                 return {
                   id: p.id,
-                  title: rawData.titulo_projeto || rawData.titulo || 'Sem título',
+                  title: rawData.titulo || 'Sem título',
                   type: 'PICITE',
                   status: p.status,
                   createdAt: p.createdAt,

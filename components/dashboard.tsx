@@ -10,7 +10,7 @@ import Onboarding from './onboarding';
 import AcompanhamentoPublicacao from './acompanhamento-publicacao';
 import DossieProjeto from './dossie-projeto';
 import Picite from './picite';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy, or } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 type ViewState = 'dashboard' | 'fomento-pesquisa' | 'fomento-publicacao' | 'profile' | 'acompanhamento-publicacao' | 'dossie-projeto' | 'picite';
@@ -74,12 +74,7 @@ export default function Dashboard() {
       setLoading(false);
     });
 
-    const filters = [where('authorUid', '==', user.uid)];
-    if (user.email) {
-      filters.push(where('participantEmails', 'array-contains', user.email));
-    }
-    const projectsQuery = query(collection(db, 'projects'), or(...filters));
-
+    const projectsQuery = query(collection(db, 'projects'), where('authorUid', '==', user.uid));
     const unsubscribeProjects = onSnapshot(projectsQuery, (snapshot) => {
       const formattedProjects = snapshot.docs.map(docSnap => {
         const data = docSnap.data();
@@ -715,7 +710,7 @@ export default function Dashboard() {
                         Acompanhar Publicação
                       </button>
                     )}
-                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && (projectDetailsModal.status === 'Aprovado' || projectDetailsModal.status === 'Em Execução') && (
+                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && projectDetailsModal.status === 'Aprovado' && (
                       <button 
                         onClick={() => {
                           setSelectedProject(projectDetailsModal);
@@ -727,7 +722,7 @@ export default function Dashboard() {
                         Ver Dossiê do Projeto
                       </button>
                     )}
-                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && (projectDetailsModal.status !== 'Aprovado' && projectDetailsModal.status !== 'Em Execução') && (
+                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && projectDetailsModal.status !== 'Aprovado' && (
                       <div className="px-4 py-2 bg-surface-container-low text-on-surface-variant text-sm font-bold rounded-lg cursor-not-allowed" title="O dossiê só estará disponível após a aprovação do projeto.">
                         Dossiê Indisponível (Aguardando Aprovação)
                       </div>

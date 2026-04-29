@@ -6,7 +6,6 @@ import Login from '@/components/login';
 import Onboarding from '@/components/onboarding';
 import Dashboard from '@/components/dashboard';
 import AdminDashboard from '@/components/admin-dashboard';
-import { seedMockData } from '@/lib/local-storage';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -15,9 +14,6 @@ export default function Home() {
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Seed basic data on load
-    seedMockData();
-
     const checkProfile = async () => {
       if (user) {
         try {
