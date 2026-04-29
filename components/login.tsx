@@ -1,52 +1,20 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { Lock, User, ShieldCheck, Mail, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, ArrowRight } from 'lucide-react';
+import Image from 'next/image';
 
 export default function Login() {
-  const { signInWithPassword, signUp, loginAdmin } = useAuth();
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [email, setEmail] = useState('');
+  const { loginWithGoogle } = useAuth();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
 
-  const handleAdminSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const success = loginAdmin(username, password);
-    if (!success) {
-      setError('Credenciais inválidas');
-    }
-  };
-
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) return;
-    
+  const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
-    setSuccessMessage('');
-    
-    let success = false;
-    
-    if (isRegistering) {
-      success = await signUp(email, password);
-      if (success) {
-        setSuccessMessage('Conta criada com sucesso! Você já pode fazer login.');
-        setIsRegistering(false);
-        setPassword('');
-      } else {
-        setError('Erro ao criar conta. Verifique os dados ou se o e-mail já existe.');
-      }
-    } else {
-      success = await signInWithPassword(email, password);
-      if (!success) {
-        setError('E-mail ou senha incorretos.');
-      }
+    const success = await loginWithGoogle();
+    if (!success) {
+      setError('Erro ao fazer login com o Google.');
     }
-    
     setLoading(false);
   };
 
@@ -54,142 +22,39 @@ export default function Login() {
     <div className="flex justify-center items-center min-h-screen bg-gradient-to-br from-surface to-surface-container-low p-4">
       <div className="glass-panel max-w-md w-full p-12 rounded-xl text-center">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">Portal CPECC</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">Portal SIEPES</h1>
           <p className="text-sm text-on-surface-variant">
             Acesse seu painel de pesquisador ou inicie um novo dossiê institucional.
           </p>
         </div>
 
-        {!showAdminLogin ? (
-          <div className="space-y-6">
-            {successMessage && (
-              <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-xl flex items-center gap-3 animate-in fade-in zoom-in duration-300 text-left">
-                <CheckCircle2 className="w-6 h-6 text-green-500 flex-shrink-0" />
-                <p className="text-sm">{successMessage}</p>
-              </div>
+        <div className="space-y-6">
+          <button 
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="btn-primary w-full flex items-center justify-center gap-2 py-4 shadow-lg hover:shadow-xl transition-all"
+          >
+            {loading ? (
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+            ) : (
+              <>
+                <svg className="w-5 h-5 bg-white rounded-full p-0.5" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Continuar com o Google
+              </>
             )}
-            
-            <form onSubmit={handleEmailLogin} className="space-y-4 text-left">
-              <div>
-                <label className="label-text">E-mail do Pesquisador</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-3.5 w-4 h-4 text-on-surface-variant" />
-                  <input 
-                    type="email" 
-                    className="input-field pl-10" 
-                    placeholder="seu.email@instituicao.edu.br"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required 
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="label-text">Senha</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3.5 w-4 h-4 text-on-surface-variant" />
-                  <input 
-                    type="password" 
-                    className="input-field pl-10" 
-                    placeholder="Sua senha"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required 
-                    minLength={6}
-                  />
-                </div>
-              </div>
-
-              {error && <p className="text-xs text-error font-bold">{error}</p>}
-
-              <button 
-                type="submit" 
-                disabled={loading || !email || !password}
-                className="btn-primary w-full flex items-center justify-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                ) : (
-                  <>{isRegistering ? 'Criar Conta' : 'Entrar'} <ArrowRight className="w-4 h-4" /></>
-                )}
-              </button>
-              
-              <div className="text-center mt-4">
-                <button 
-                  type="button"
-                  onClick={() => {
-                    setIsRegistering(!isRegistering);
-                    setError('');
-                    setSuccessMessage('');
-                  }}
-                  className="text-sm text-primary hover:underline"
-                >
-                  {isRegistering ? 'Já tem uma conta? Faça login' : 'Não tem conta? Cadastre-se'}
-                </button>
-              </div>
-            </form>
-
-            <div className="pt-4 border-t border-outline-variant">
-              <button 
-                onClick={() => setShowAdminLogin(true)}
-                className="text-xs text-primary font-bold hover:underline flex items-center justify-center gap-1 mx-auto"
-              >
-                <ShieldCheck className="w-3 h-3" /> Acesso Administrativo
-              </button>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleAdminSubmit} className="space-y-4 text-left">
-            <h2 className="text-lg font-bold text-primary mb-4 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5" /> Login Administrativo
-            </h2>
-            
-            <div>
-              <label className="label-text">Usuário</label>
-              <div className="relative">
-                <User className="absolute left-3 top-3.5 w-4 h-4 text-on-surface-variant" />
-                <input 
-                  type="text" 
-                  className="input-field pl-10" 
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required 
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="label-text">Senha</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3.5 w-4 h-4 text-on-surface-variant" />
-                <input 
-                  type="password" 
-                  className="input-field pl-10" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required 
-                />
-              </div>
-            </div>
-
-            {error && <p className="text-xs text-error font-bold">{error}</p>}
-
-            <button type="submit" className="btn-primary w-full">Entrar no Painel</button>
-            
-            <button 
-              type="button"
-              onClick={() => setShowAdminLogin(false)}
-              className="text-xs text-on-surface-variant hover:underline w-full text-center"
-            >
-              Voltar para login de pesquisador
-            </button>
-          </form>
-        )}
+          </button>
+          
+          {error && <p className="text-xs text-error font-bold">{error}</p>}
+        </div>
 
         <div className="mt-8 pt-6 border-t border-outline-variant">
-          <p className="text-xs text-on-surface-variant">
-            Plataforma de gestão de dossiês institucionais e projetos de pesquisa.
+          <p className="text-xs text-on-surface-variant flex items-center justify-center gap-1">
+            <ShieldCheck className="w-4 h-4 text-primary" /> Login seguro para Pesquisadores e Gestores
           </p>
         </div>
       </div>

@@ -1,5 +1,6 @@
 {
-  "name": "Projeto de gestão de pesquisas - V2",
+  "name": "SIEPES",
   "description": "",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

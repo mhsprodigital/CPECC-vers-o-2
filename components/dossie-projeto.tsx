@@ -30,6 +30,8 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
 
   const [despesas, setDespesas] = useState<any[]>(rawData.despesas || []);
   const [relatorios, setRelatorios] = useState<any[]>(rawData.relatorios || []);
+  const [mensagensProjeto, setMensagensProjeto] = useState<any[]>(rawData.mensagens_projeto || []);
+  const [newMessage, setNewMessage] = useState('');
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -58,6 +60,36 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
   });
 
   const [toastMessage, setToastMessage] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !userProfile) return;
+
+    const messageObj = {
+      id: Date.now().toString(),
+      from: userProfile.nome || 'Pesquisador/Estudante',
+      text: newMessage,
+      date: new Date().toISOString(),
+      read: false
+    };
+
+    const updatedMessages = [...mensagensProjeto, messageObj];
+    
+    try {
+      const docRef = doc(db, 'projects', data.id);
+      await updateDoc(docRef, {
+        raw_data: JSON.stringify({
+          ...rawData,
+          mensagens_projeto: updatedMessages
+        })
+      });
+      setMensagensProjeto(updatedMessages);
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      showToast('Erro ao enviar mensagem.', 'error');
+    }
+  };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ message, type });
@@ -484,6 +516,61 @@ export default function DossieProjeto({ project, onBack }: { project?: any, onBa
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      {/* Project Communication */}
+      <section className="mt-12">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-on-surface">Comunicação do Projeto</h2>
+        </div>
+        <div className="bg-surface border border-outline-variant rounded-2xl flex flex-col h-[400px]">
+          <div className="flex-1 p-4 overflow-y-auto space-y-4">
+            {mensagensProjeto.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-on-surface-variant">
+                <p>Nenhuma mensagem ainda.</p>
+                <p className="text-sm mt-1">Inicie a comunicação com o SIEPES ou participantes do projeto.</p>
+              </div>
+            ) : (
+              mensagensProjeto.map((msg: any) => {
+                const isMine = msg.from === (userProfile?.nome || 'Pesquisador/Estudante');
+                return (
+                  <div key={msg.id} className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-on-surface-variant">{msg.from}</span>
+                      <span className="text-[10px] text-on-surface-variant">
+                        {new Date(msg.date).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                    <div className={`px-4 py-2 rounded-2xl max-w-[80%] ${isMine ? 'bg-primary text-on-primary rounded-tr-sm' : 'bg-surface-container-highest text-on-surface rounded-tl-sm'}`}>
+                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <form onSubmit={handleSendMessage} className="p-4 bg-surface-container-lowest border-t border-outline-variant flex gap-3">
+            <textarea
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder="Digite sua mensagem para o SIEPES ou participantes..."
+              className="input-field flex-1 resize-none h-[44px] min-h-[44px] py-3"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(e as any);
+                }
+              }}
+            />
+            <button
+              type="submit"
+              disabled={!newMessage.trim()}
+              className="btn-primary h-[44px] px-6"
+            >
+              Enviar
+            </button>
+          </form>
         </div>
       </section>
 

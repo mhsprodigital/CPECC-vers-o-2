@@ -96,6 +96,30 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const getDocStatus = (docId: string) => {
+    if (!initialData) return null;
+    
+    let uploadedDocs: any = {};
+    try {
+      uploadedDocs = initialData.anexos_json ? JSON.parse(initialData.anexos_json) : {};
+    } catch (e) {}
+
+    const hasDoc = uploadedDocs[docId];
+    if (hasDoc) {
+      const docStatuses = initialData.document_statuses || {};
+      const statusInfo = docStatuses[docId];
+
+      if (statusInfo?.status === 'Rejeitado') {
+        return { label: 'Inconsistência', color: 'bg-red-100 text-red-800', message: statusInfo.message, signedUrl: statusInfo.signedUrl };
+      } else if (statusInfo?.status === 'Aprovado') {
+        return { label: 'Aprovado', color: 'bg-green-100 text-green-800', signedUrl: statusInfo.signedUrl };
+      }
+      return { label: 'Em Análise', color: 'bg-yellow-100 text-yellow-800' };
+    }
+    
+    return { label: 'Pendente de Envio', color: 'bg-gray-100 text-gray-800' };
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, files: selectedFiles } = e.target;
     if (selectedFiles && selectedFiles[0]) {
@@ -533,11 +557,30 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
                 { id: 'projeto_completo', label: 'Projeto Completo', desc: 'PDF. Max 10MB.' },
                 { id: 'planos_trabalho', label: 'Planos de Trabalho Individuais', desc: 'ZIP ou PDF.' },
                 { id: 'aprovacao_cep', label: 'Aprovação do CEP/CONEP', desc: 'Obrigatório para pesquisas com seres humanos.' },
-              ].map((doc) => (
-                <div key={doc.id} className="border-2 border-dashed border-outline-variant/50 rounded-xl bg-surface-container-lowest p-6 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors relative">
+              ].map((doc) => {
+                const status = getDocStatus(doc.id);
+                return (
+                <div key={doc.id} className={`border-2 border-dashed ${status && status.label === 'Inconsistência' ? 'border-red-300 bg-red-50' : 'border-outline-variant/50 bg-surface-container-lowest'} rounded-xl p-6 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors relative`}>
                   <Upload className="w-8 h-8 text-primary mb-3 opacity-50" />
                   <h4 className="font-bold text-on-surface mb-1 text-sm">{doc.label}</h4>
                   <p className="text-xs text-on-surface-variant mb-4">{doc.desc}</p>
+                  
+                  {status && (
+                    <div className={`mt-2 mb-4 px-3 py-1 rounded-full text-xs font-bold ${status.color}`}>
+                      {status.label}
+                    </div>
+                  )}
+                  {status?.message && (
+                    <div className="text-xs text-red-600 bg-red-100 p-2 rounded mb-4 w-full text-left">
+                      <strong>Motivo:</strong> {status.message}
+                    </div>
+                  )}
+                  {status?.signedUrl && (
+                    <a href={status.signedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary underline mb-4 flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Ver Documento Assinado
+                    </a>
+                  )}
+
                   {!readOnly && (
                     <input
                       type="file"
@@ -553,7 +596,7 @@ export default function FomentoPesquisa({ onBack, initialData, readOnly = false 
                     </div>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         )}

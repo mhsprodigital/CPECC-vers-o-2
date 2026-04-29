@@ -34,11 +34,10 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.email == "mhs.pro.digital@gmail.com" ||
-        (exists(/databases/$(database)/documents/system_config/admins) &&
-         request.auth.token.email in get(/databases/$(database)/documents/system_config/admins).data.emails)
-      );
+      let isMasterAdmin = isAuthenticated() && 'email' in request.auth.token && request.auth.token.email == "mhs.pro.digital@gmail.com";
+      let systemAdminsDoc = get(/databases/$(database)/documents/system_config/admins);
+      let isSystemAdmin = systemAdminsDoc != null && 'emails' in systemAdminsDoc.data && 'email' in request.auth.token && request.auth.token.email in systemAdminsDoc.data.emails;
+      return isMasterAdmin || isSystemAdmin;
     }
 
     // ===============================================================
@@ -67,10 +66,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function isProjectParticipant() {
+      return isAuthenticated() && (
+        resource.data.authorUid == request.auth.uid || 
+        ('participantEmails' in resource.data && request.auth.token.email in resource.data.participantEmails)
+      );
+    }
+
     match /projects/{projectId} {
-      allow read: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (isProjectParticipant() || isAdmin());
       allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid && hasRequiredFields(['authorUid', 'type', 'status', 'raw_data']) && isValidProject(request.resource.data);
-      allow update: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin()) && isValidProject(request.resource.data);
+      allow update: if isAuthenticated() && (isProjectParticipant() || isAdmin()) && isValidProject(request.resource.data);
       allow delete: if isAdmin();
     }
 

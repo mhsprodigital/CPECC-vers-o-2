@@ -150,6 +150,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
   const handleSubmit = async () => {
     if (!user) return;
     setLoading(true);
+    showToast('Aguarde, estamos processando seus dados', 'success');
 
     try {
       // Upload files
@@ -191,8 +192,8 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
         ...currentRawData,
         ...formData,
         historico_formacao: historicoFormacao,
-        foto_perfil: uploadedDocs['foto_perfil'] || currentRawData?.foto_perfil,
-        documentos_json: Object.keys(mergedDocs).length > 0 ? JSON.stringify(mergedDocs) : currentRawData?.documentos_json,
+        foto_perfil: uploadedDocs['foto_perfil'] || currentRawData?.foto_perfil || null,
+        documentos_json: Object.keys(mergedDocs).length > 0 ? JSON.stringify(mergedDocs) : (currentRawData?.documentos_json || null),
         document_statuses: documentStatuses
       };
 
@@ -200,6 +201,7 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
       const newStatus = hasNewDocs ? 'Pendente' : currentStatus;
 
       await setDoc(docRef, {
+        uid: user.uid,
         id: user.uid,
         nome: formData.nome || '',
         cpf: formData.cpf || '',
@@ -221,6 +223,15 @@ export default function Onboarding({ onComplete, initialData }: { onComplete: ()
 
   return (
     <div className="min-h-screen bg-surface py-12 px-4 sm:px-6 lg:px-8">
+      {loading && (
+        <div className="fixed inset-0 z-[200] bg-surface/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in">
+          <div className="bg-white p-8 rounded-2xl shadow-xl flex flex-col items-center max-w-sm w-full mx-4 border border-outline-variant text-center">
+            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-6"></div>
+            <h3 className="text-xl font-bold text-primary mb-2">Processando Cadastro</h3>
+            <p className="text-on-surface-variant">Aguarde, estamos processando seus dados e fazendo o upload dos documentos de forma segura para o GDrive.</p>
+          </div>
+        </div>
+      )}
       {toastMessage && (
         <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
           {toastMessage.message}

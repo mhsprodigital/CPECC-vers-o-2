@@ -8,8 +8,8 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope' });
 
 export const metadata: Metadata = {
-  title: 'Portal do Pesquisador - CPECC',
-  description: 'Sistema de gestão de pesquisa científica',
+  title: 'Portal do Pesquisador - SIEPES',
+  description: 'Sistema Integrado de Inovação, Ensino, Pesquisa e Extensão',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

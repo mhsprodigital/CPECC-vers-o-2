@@ -194,6 +194,73 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
     }
   };
 
+  const getDocStatus = (docName: string, mapKey: string) => {
+    if (!initialData) return null;
+    
+    // Check if uploaded
+    const isUploaded = files[mapKey as keyof typeof files] || initialData?.documentos?.[`${mapKey}_url`];
+    if (!isUploaded) return { label: 'Pendente', color: 'bg-gray-100 text-gray-800' };
+
+    const docStatuses = initialData.document_statuses || {};
+    const statusInfo = docStatuses[docName];
+
+    if (statusInfo?.status === 'Rejeitado') {
+      return { label: 'Inconsistência', color: 'bg-red-100 text-red-800', message: statusInfo.message, signedUrl: statusInfo.signedUrl };
+    } else if (statusInfo?.status === 'Aprovado') {
+      return { label: 'Aprovado', color: 'bg-green-100 text-green-800', signedUrl: statusInfo.signedUrl };
+    }
+    return { label: 'Em Análise', color: 'bg-yellow-100 text-yellow-800' };
+  };
+
+  const renderDocUpload = (id: string, mapKey: string, title: string, subtitle: string, icon: any) => {
+    const status = getDocStatus(title, mapKey);
+    const StatusIcon = icon;
+    
+    return (
+      <div className={`p-4 rounded border ${status?.label === 'Inconsistência' ? 'border-red-300 bg-red-50' : 'border-outline-variant bg-surface'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex gap-4">
+            <div className="w-12 h-12 bg-surface-container-low rounded flex items-center justify-center text-primary">
+              <StatusIcon className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-bold text-on-surface">{title}</h4>
+              <p className="text-xs text-on-surface-variant">{subtitle}</p>
+              {status && (
+                <div className={`mt-1 inline-block px-2 py-0.5 rounded text-[10px] font-bold ${status.color}`}>
+                  {status.label}
+                </div>
+              )}
+            </div>
+          </div>
+          {!readOnly ? (
+            <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
+              {files[mapKey as keyof typeof files] ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
+              {!files[mapKey as keyof typeof files] && <ArrowRight className="w-4 h-4" />}
+              <input type="file" onChange={(e) => handleFileChange(e, mapKey as any)} accept=".pdf" className="hidden" />
+            </label>
+          ) : (
+            <div className="text-primary text-sm font-bold flex items-center justify-between">
+              {(files[mapKey as keyof typeof files] || initialData?.documentos?.[`${mapKey}_url`]) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
+            </div>
+          )}
+        </div>
+        {status?.message && (
+          <div className="text-xs text-red-700 bg-red-100 p-2 rounded mt-2">
+            <strong>Motivo da rejeição:</strong> {status.message}
+          </div>
+        )}
+        {status?.signedUrl && (
+          <div className="mt-2 text-xs">
+            <a href={status.signedUrl} target="_blank" rel="noreferrer" className="text-primary underline flex items-center gap-1">
+              <Check className="w-3 h-3" /> Visualizar Documento Assinado (SIEPES)
+            </a>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 relative pb-24">
       {toastMessage && (
@@ -341,81 +408,10 @@ export default function FomentoPublicacao({ onBack, initialData, readOnly = fals
               <p className="text-sm text-on-surface-variant">Por favor, anexe os arquivos necessários para a validação da sua submissão. Certifique-se de que os documentos estão em formato PDF.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="md:col-span-2">
-                <div className="border-2 border-dashed border-outline-variant/50 rounded-xl bg-surface-container-lowest p-8 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors relative h-full min-h-[300px]">
-                  <div className="absolute top-4 right-4 bg-surface-container-low text-xs font-bold px-2 py-1 rounded uppercase">Obrigatório</div>
-                  <FileText className="w-12 h-12 text-primary mb-4 opacity-50" />
-                  <h4 className="font-bold text-lg text-on-surface mb-2">Artigo Submetido (PDF)</h4>
-                  <p className="text-sm text-on-surface-variant mb-6">Versão final do artigo para revisão técnica e publicação.</p>
-                  
-                  {!readOnly && (
-                    <label className="btn-secondary cursor-pointer flex items-center gap-2">
-                      <Upload className="w-4 h-4" /> Procurar no computador
-                      <input
-                        type="file"
-                        onChange={(e) => handleFileChange(e, 'artigo')}
-                        accept=".pdf"
-                        className="hidden"
-                        required
-                      />
-                    </label>
-                  )}
-                  {(files.artigo || initialData?.documentos?.artigo_url) && (
-                    <div className="mt-4 flex items-center gap-2 text-sm text-green-600 font-bold bg-green-50 px-4 py-2 rounded-full">
-                      <Check className="w-4 h-4" /> {files.artigo?.name || 'artigo.pdf'}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div className="border border-gray-200 rounded-xl p-6 bg-white hover:shadow-md transition-shadow">
-                  <div className="flex items-start gap-4 mb-4">
-                    <div className="w-10 h-10 rounded bg-teal-50 text-teal-600 flex items-center justify-center">
-                      <FileText className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-on-surface">Resumo (Abstract)</h4>
-                      <p className="text-xs text-on-surface-variant">Máx. 500 palavras</p>
-                    </div>
-                  </div>
-                  {!readOnly ? (
-                    <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
-                      {files.resumo ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
-                      {!files.resumo && <ArrowRight className="w-4 h-4" />}
-                      <input type="file" onChange={(e) => handleFileChange(e, 'resumo')} accept=".pdf,.doc,.docx" className="hidden" />
-                    </label>
-                  ) : (
-                    <div className="text-primary text-sm font-bold flex items-center justify-between">
-                      {(files.resumo || initialData?.documentos?.resumo_url) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
-                    </div>
-                  )}
-                </div>
-
-                <div className="border border-gray-200 rounded-xl p-6 bg-white hover:shadow-md transition-shadow">
-                  <div className="flex items-start gap-4 mb-4">
-                    <div className="w-10 h-10 rounded bg-yellow-50 text-yellow-600 flex items-center justify-center">
-                      <Check className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-on-surface">Carta de Aceite</h4>
-                      <p className="text-xs text-on-surface-variant">Documento institucional</p>
-                    </div>
-                  </div>
-                  {!readOnly ? (
-                    <label className="text-primary text-sm font-bold flex items-center justify-between cursor-pointer hover:underline">
-                      {files.aceite ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : 'Anexar arquivo'}
-                      {!files.aceite && <ArrowRight className="w-4 h-4" />}
-                      <input type="file" onChange={(e) => handleFileChange(e, 'aceite')} accept=".pdf" className="hidden" />
-                    </label>
-                  ) : (
-                    <div className="text-primary text-sm font-bold flex items-center justify-between">
-                      {(files.aceite || initialData?.documentos?.aceite_url) ? <span className="text-green-600 flex items-center gap-1"><Check className="w-4 h-4"/> Anexado</span> : <span className="text-on-surface-variant">Não anexado</span>}
-                    </div>
-                  )}
-                </div>
-              </div>
+            <div className="space-y-4">
+              {renderDocUpload('Artigo Submetido (PDF)', 'artigo', 'Artigo Submetido (PDF)', 'Versão final do artigo para revisão técnica e publicação.', FileText)}
+              {renderDocUpload('Resumo (Abstract)', 'resumo', 'Resumo (Abstract)', 'Máx. 500 palavras. Resumo em português e inglês.', FileText)}
+              {renderDocUpload('Carta de Aceite', 'aceite', 'Carta de Aceite', 'Documento institucional.', Check)}
             </div>
           </div>
         )}

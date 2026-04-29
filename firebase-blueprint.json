@@ -81,7 +81,7 @@
     },
     "Message": {
       "title": "Message",
-      "description": "A message between CPECC and a researcher",
+      "description": "A message between SIEPES and a researcher",
       "type": "object",
       "properties": {
         "authorUid": { "type": "string" },

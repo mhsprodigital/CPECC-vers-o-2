@@ -10,7 +10,7 @@ import Onboarding from './onboarding';
 import AcompanhamentoPublicacao from './acompanhamento-publicacao';
 import DossieProjeto from './dossie-projeto';
 import Picite from './picite';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy, or } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 type ViewState = 'dashboard' | 'fomento-pesquisa' | 'fomento-publicacao' | 'profile' | 'acompanhamento-publicacao' | 'dossie-projeto' | 'picite';
@@ -74,7 +74,12 @@ export default function Dashboard() {
       setLoading(false);
     });
 
-    const projectsQuery = query(collection(db, 'projects'), where('authorUid', '==', user.uid));
+    const filters = [where('authorUid', '==', user.uid)];
+    if (user.email) {
+      filters.push(where('participantEmails', 'array-contains', user.email));
+    }
+    const projectsQuery = query(collection(db, 'projects'), or(...filters));
+
     const unsubscribeProjects = onSnapshot(projectsQuery, (snapshot) => {
       const formattedProjects = snapshot.docs.map(docSnap => {
         const data = docSnap.data();
@@ -133,7 +138,7 @@ export default function Dashboard() {
     
     let hasUnread = false;
     const updatedMessages = profile.mensagens.map((m: any) => {
-      if (m.from === 'CPECC' && !m.read) {
+      if (m.from === 'SIEPES' && !m.read) {
         hasUnread = true;
         return { ...m, read: true };
       }
@@ -151,7 +156,7 @@ export default function Dashboard() {
     }
   };
 
-  const unreadCount = profile?.mensagens?.filter((m: any) => m.from === 'CPECC' && !m.read).length || 0;
+  const unreadCount = profile?.mensagens?.filter((m: any) => m.from === 'SIEPES' && !m.read).length || 0;
 
   useEffect(() => {
     if (showMessages) {
@@ -233,7 +238,7 @@ export default function Dashboard() {
               <div className="mb-6 p-4 bg-error/10 border border-error/20 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-4">
                 <Bell className="w-6 h-6 text-error shrink-0 mt-0.5" />
                 <div>
-                  <h3 className="text-error-dark font-bold text-lg">Você tem novas mensagens do CPECC</h3>
+                  <h3 className="text-error-dark font-bold text-lg">Você tem novas mensagens do SIEPES</h3>
                   <p className="text-error-dark/80 text-sm mt-1">
                     Existem atualizações ou pendências importantes que exigem sua atenção.
                   </p>
@@ -447,7 +452,7 @@ export default function Dashboard() {
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-gray-200 hidden md:flex flex-col fixed h-full z-10">
         <div className="p-8">
-          <h2 className="text-2xl font-extrabold text-primary tracking-tight">CPECC</h2>
+          <h2 className="text-2xl font-extrabold text-primary tracking-tight">SIEPES</h2>
           <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mt-1">Portal do Pesquisador</p>
         </div>
         <nav className="flex-1 px-4 flex flex-col gap-2">
@@ -710,7 +715,7 @@ export default function Dashboard() {
                         Acompanhar Publicação
                       </button>
                     )}
-                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && projectDetailsModal.status === 'Aprovado' && (
+                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && (projectDetailsModal.status === 'Aprovado' || projectDetailsModal.status === 'Em Execução') && (
                       <button 
                         onClick={() => {
                           setSelectedProject(projectDetailsModal);
@@ -722,7 +727,7 @@ export default function Dashboard() {
                         Ver Dossiê do Projeto
                       </button>
                     )}
-                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && projectDetailsModal.status !== 'Aprovado' && (
+                    {(projectDetailsModal.type === 'Fomento à Pesquisa' || projectDetailsModal.type === 'PICITE') && (projectDetailsModal.status !== 'Aprovado' && projectDetailsModal.status !== 'Em Execução') && (
                       <div className="px-4 py-2 bg-surface-container-low text-on-surface-variant text-sm font-bold rounded-lg cursor-not-allowed" title="O dossiê só estará disponível após a aprovação do projeto.">
                         Dossiê Indisponível (Aguardando Aprovação)
                       </div>
@@ -748,7 +753,7 @@ export default function Dashboard() {
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-surface-container-lowest">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-primary/5">
               {(!profile?.mensagens || profile.mensagens.length === 0) ? (
                 <div className="text-center text-on-surface-variant py-8">
                   Nenhuma mensagem no momento.
@@ -756,13 +761,13 @@ export default function Dashboard() {
               ) : (
                 profile.mensagens.map((msg: any) => (
                   <div key={msg.id} className={`flex flex-col ${msg.from === 'Pesquisador' ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[80%] p-4 rounded-2xl ${
+                    <div className={`shadow-sm max-w-[80%] p-4 rounded-2xl ${
                       msg.from === 'Pesquisador' 
                         ? 'bg-primary text-on-primary rounded-tr-sm' 
-                        : 'bg-surface-container-high text-on-surface rounded-tl-sm'
+                        : 'bg-white border border-primary/20 text-on-surface rounded-tl-sm'
                     }`}>
                       <div className="text-xs opacity-70 mb-1 font-bold">
-                        {msg.from === 'CPECC' ? 'CPECC / Admin' : 'Você'}
+                        {msg.from === 'SIEPES' ? 'SIEPES / Admin' : 'Você'}
                       </div>
                       <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
                     </div>
@@ -780,7 +785,7 @@ export default function Dashboard() {
                   type="text" 
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Digite sua mensagem para a CPECC..."
+                  placeholder="Digite sua mensagem para o SIEPES..."
                   className="input-field flex-1"
                 />
                 <button 

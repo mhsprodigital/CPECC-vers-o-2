@@ -57,7 +57,7 @@ export default function AcompanhamentoPublicacao({ project, onBack }: { project?
             </div>
             <div className="flex-1 bento-card p-4 border-t-4 border-blue-500 bg-blue-50/30 shadow-md">
               <div className="flex justify-between items-start mb-2">
-                <span className="text-xs font-bold uppercase tracking-widest text-blue-700">Avaliação CPECC</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-blue-700">Avaliação SIEPES</span>
                 <RefreshCw className="w-4 h-4 text-blue-600 animate-spin-slow" />
               </div>
               <h4 className="font-bold text-sm text-blue-900">Em processamento</h4>
@@ -116,7 +116,7 @@ export default function AcompanhamentoPublicacao({ project, onBack }: { project?
                 </div>
                 <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-4 rounded-xl border border-blue-200 shadow-md ring-1 ring-blue-100">
                   <div className="flex items-center justify-between mb-1">
-                    <h4 className="font-bold text-sm text-on-surface">Parecer Técnico CPECC</h4>
+                    <h4 className="font-bold text-sm text-on-surface">Parecer Técnico SIEPES</h4>
                     <span className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded">Em análise</span>
                   </div>
                   <p className="text-xs text-on-surface-variant mb-3">Avaliação do mérito científico e adequação orçamentária.</p>

@@ -24,14 +24,15 @@ import {
   CheckCircle,
   Eye,
   ExternalLink,
-  Download
+  Download,
+  MessageSquare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getFromLocal, saveToLocal, removeFromLocal } from '@/lib/local-storage';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, setDoc, deleteDoc, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
-type AdminTab = 'overview' | 'submissions' | 'publications' | 'accountability' | 'team' | 'researchers';
+type AdminTab = 'overview' | 'submissions' | 'publications' | 'picite' | 'messages' | 'accountability' | 'team' | 'researchers';
 
 const GOOGLE_DRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuBZhMOrfMNzjkODqz-JE5Yu_3qTH94l5rP_Kd-UiwOzV8CWgPf3EuXxp4nvmyz92Y0w/exec';
 
@@ -40,15 +41,18 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [publications, setPublications] = useState<any[]>([]);
+  const [picites, setPicites] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);
   const [researchers, setResearchers] = useState<any[]>([]);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
+  const [newAdmin, setNewAdmin] = useState({ email: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
   const [loading, setLoading] = useState(true);
   
   // New states for pending analysis modal
   const [allProjects, setAllProjects] = useState<any[]>([]);
   const [showPendingModal, setShowPendingModal] = useState(false);
+  const [showProjectDashboardModal, setShowProjectDashboardModal] = useState(false);
+  const [selectedDashboardProject, setSelectedDashboardProject] = useState<any | null>(null);
   const [adminNewMessage, setAdminNewMessage] = useState('');
 
   const handleSendAdminMessage = async (researcherId: string) => {
@@ -59,14 +63,15 @@ export default function AdminDashboard() {
 
     const messageObj = {
       id: Date.now().toString(),
-      from: 'CPECC',
+      from: 'SIEPES',
       text: adminNewMessage,
       date: new Date().toISOString(),
       read: false
     };
 
     const updatedMessages = [...(researcher.mensagens || []), messageObj];
-    const updatedRawData = { ...researcher, mensagens: updatedMessages };
+    const { raw_data, ...researcherWithoutRaw } = researcher;
+    const updatedRawData = { ...researcherWithoutRaw, mensagens: updatedMessages };
 
     try {
       const docRef = doc(db, 'researchers', researcherId);
@@ -90,6 +95,9 @@ export default function AdminDashboard() {
   const [docToRejectInfo, setDocToRejectInfo] = useState<{doc: any, name: string, url: string} | null>(null);
   const [allowCorrection, setAllowCorrection] = useState(true);
   
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [projectToDeleteId, setProjectToDeleteId] = useState<string | null>(null);
+
   // Accountability states
   const [showAccountabilityModal, setShowAccountabilityModal] = useState(false);
   const [selectedAccountabilityProject, setSelectedAccountabilityProject] = useState<any | null>(null);
@@ -110,20 +118,34 @@ export default function AdminDashboard() {
         // Fetch researchers
         const researchersQuery = query(collection(db, 'researchers'));
         const unsubscribeResearchers = onSnapshot(researchersQuery, (snapshot) => {
-          const researchersData = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+          const researchersData = snapshot.docs.map(docSnap => {
+            const data = docSnap.data();
+            return {
+              id: docSnap.id,
+              ...data,
+              raw_data: data // Point raw_data to root so old code works!
+            };
+          });
           setResearchers(researchersData);
           
           // Fetch projects
           const projectsQuery = query(collection(db, 'projects'));
           const unsubscribeProjects = onSnapshot(projectsQuery, (projSnapshot) => {
-            const projectsData = projSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+            const projectsData = projSnapshot.docs.map(docSnap => {
+              const data = docSnap.data();
+              return {
+                id: docSnap.id,
+                ...data,
+                raw_data: typeof data.raw_data === 'string' ? JSON.parse(data.raw_data || '{}') : (data.raw_data || {})
+              };
+            });
             setAllProjects(projectsData);
             
             const formattedSubmissions = projectsData
               .filter((p: any) => p.type === 'fomento_pesquisa')
               .map((p: any) => {
                 const researcher = researchersData?.find((r: any) => r.id === p.authorUid);
-                const rawData = JSON.parse(p.raw_data || '{}');
+                const rawData = typeof p.raw_data === 'string' ? JSON.parse(p.raw_data || '{}') : (p.raw_data || {});
                 return {
                   id: p.id,
                   title: rawData.titulo || 'Sem título',
@@ -141,7 +163,7 @@ export default function AdminDashboard() {
               .filter((p: any) => p.type === 'fomento_publicacao')
               .map((p: any) => {
                 const researcher = researchersData?.find((r: any) => r.id === p.authorUid);
-                const rawData = JSON.parse(p.raw_data || '{}');
+                const rawData = typeof p.raw_data === 'string' ? JSON.parse(p.raw_data || '{}') : (p.raw_data || {});
                 return {
                   id: p.id,
                   title: rawData.titulo || 'Sem título',
@@ -152,8 +174,24 @@ export default function AdminDashboard() {
                 };
               });
 
+            const formattedPicites = projectsData
+              .filter((p: any) => p.type === 'picite')
+              .map((p: any) => {
+                const researcher = researchersData?.find((r: any) => r.id === p.authorUid);
+                const rawData = typeof p.raw_data === 'string' ? JSON.parse(p.raw_data || '{}') : (p.raw_data || {});
+                return {
+                  id: p.id,
+                  title: rawData.titulo_projeto || rawData.titulo || 'Sem título',
+                  type: 'PICITE',
+                  status: p.status,
+                  createdAt: p.createdAt,
+                  researcherName: (researcher as any)?.nome || 'Desconhecido'
+                };
+              });
+
             setSubmissions(formattedSubmissions);
             setPublications(formattedPublications);
+            setPicites(formattedPicites);
             setLoading(false);
           }, (error) => {
             console.error('Error fetching projects:', error);
@@ -199,10 +237,11 @@ export default function AdminDashboard() {
     
     try {
       const docRef = doc(db, 'system_config', 'admins');
-      await updateDoc(docRef, { admins: updatedAdmins });
+      const emails = updatedAdmins.map(a => a.email).filter(Boolean);
+      await setDoc(docRef, { admins: updatedAdmins, emails }, { merge: true });
       
       localStorage.setItem('admins', JSON.stringify(updatedAdmins));
-      setNewAdmin({ username: '', password: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
+      setNewAdmin({ email: '', nome: '', cargo: '', matricula: '', role: 'gestor' });
       setShowAddAdmin(false);
       showToast('Gestor adicionado com sucesso!', 'success');
     } catch (error) {
@@ -213,14 +252,15 @@ export default function AdminDashboard() {
 
   const removeAdmin = async (id: string) => {
     const adminToRemove = admins.find(a => a.id === id);
-    if (adminToRemove?.username === 'admin') return; // Prevent deleting master admin
+    if (adminToRemove?.role === 'admin' || adminToRemove?.email === 'mhs.pro.digital@gmail.com') return; // Prevent deleting master admin
     
     const updatedAdmins = admins.filter(a => a.id !== id);
     setAdmins(updatedAdmins);
     
     try {
       const docRef = doc(db, 'system_config', 'admins');
-      await updateDoc(docRef, { admins: updatedAdmins });
+      const emails = updatedAdmins.map(a => a.email).filter(Boolean);
+      await setDoc(docRef, { admins: updatedAdmins, emails }, { merge: true });
       
       localStorage.setItem('admins', JSON.stringify(updatedAdmins));
       showToast('Colaborador removido.', 'success');
@@ -399,7 +439,7 @@ export default function AdminDashboard() {
           </div>
           
           <div class="header-info">
-            <div class="logo-placeholder">CPECC / ESPDF</div>
+            <div class="logo-placeholder">SIEPES / ESPDF</div>
             <div style="text-align: right;">
               <div style="font-weight: 700;">Dossiê Técnico-Científico</div>
               <div style="font-size: 0.8em; opacity: 0.9;">ID do Projeto: ${project.id}</div>
@@ -506,8 +546,8 @@ export default function AdminDashboard() {
           </div>
 
           <div class="footer">
-            Este dossiê é um documento oficial gerado pelo Sistema de Gestão de Pesquisa CPECC/ESPDF.<br>
-            Autenticado em: ${new Date().toLocaleString('pt-BR')} por ${adminUser?.nome || 'Gestor CPECC'}.<br>
+            Este dossiê é um documento oficial gerado pelo Sistema Integrado de Inovação, Ensino, Pesquisa e Extensão (SIEPES).<br>
+            Autenticado em: ${new Date().toLocaleString('pt-BR')} por ${adminUser?.nome || 'Gestor SIEPES'}.<br>
             <strong>Fundação de Ensino e Pesquisa em Ciências da Saúde - FEPECS | CNPJ: 00.394.700/0001-08</strong>
           </div>
         </body>
@@ -536,6 +576,28 @@ export default function AdminDashboard() {
     }
   };
 
+  const triggerDeleteProject = (id: string) => {
+    setProjectToDeleteId(id);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!projectToDeleteId) return;
+    try {
+      await deleteDoc(doc(db, 'projects', projectToDeleteId));
+      setAllProjects(prev => prev.filter(p => p.id !== projectToDeleteId));
+      setSubmissions(prev => prev.filter(p => p.id !== projectToDeleteId));
+      setPublications(prev => prev.filter(p => p.id !== projectToDeleteId));
+      setPicites(prev => prev.filter(p => p.id !== projectToDeleteId));
+      showToast('Projeto deletado com sucesso!', 'success');
+      setShowDeleteModal(false);
+      setProjectToDeleteId(null);
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      showToast('Erro ao deletar projeto. Verifique suas permissões.', 'error');
+    }
+  };
+
   const handleApproveDocument = async (id: string, isResearcher: boolean = false) => {
     try {
       if (isResearcher) {
@@ -552,6 +614,7 @@ export default function AdminDashboard() {
         setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         setPublications(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
+        setPicites(prev => prev.map(p => p.id === id ? { ...p, status: 'Aprovado' } : p));
         
         if (selectedAccountabilityProject?.id === id) {
           setSelectedAccountabilityProject((prev: any) => ({ ...prev, status: 'Aprovado' }));
@@ -704,12 +767,62 @@ export default function AdminDashboard() {
       XLSX.utils.book_append_sheet(wb, wsProjects, "Projetos e Fomentos");
 
       // Export
-      XLSX.writeFile(wb, `CPECC_Base_Dados_${new Date().toISOString().split('T')[0]}.xlsx`);
+      XLSX.writeFile(wb, `SIEPES_Base_Dados_${new Date().toISOString().split('T')[0]}.xlsx`);
       
       showToast('Planilha baixada com sucesso!', 'success');
     } catch (error) {
       console.error('Erro ao exportar dados:', error);
       showToast('Erro ao gerar planilha.', 'error');
+    }
+  };
+
+  const handleExportCSV = () => {
+    try {
+      showToast('Gerando CSV...', 'success');
+      
+      const researchersData = researchers.map(r => {
+        const raw = r.raw_data || {};
+        return {
+          'ID': r.id,
+          'Nome': r.nome,
+          'CPF': r.cpf,
+          'Email': r.email_inst,
+          'Status': r.status
+        };
+      });
+
+      const projectsData = allProjects.map(p => {
+        const raw = p.raw_data || {};
+        return {
+          'ID': p.id,
+          'Titulo': raw.titulo || '',
+          'Tipo': p.type,
+          'Status': p.status,
+          'Data': p.created_at
+        };
+      });
+
+      const exportToCSVFile = (data: any[], filename: string) => {
+        const ws = XLSX.utils.json_to_sheet(data);
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' }); // Add BOM for excel
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      exportToCSVFile(researchersData, `SIEPES_Pesquisadores_${new Date().toISOString().split('T')[0]}.csv`);
+      exportToCSVFile(projectsData, `SIEPES_Projetos_${new Date().toISOString().split('T')[0]}.csv`);
+      
+      showToast('Arquivos CSV baixados com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao exportar CSV:', error);
+      showToast('Erro ao gerar CSV.', 'error');
     }
   };
 
@@ -719,7 +832,7 @@ export default function AdminDashboard() {
       
       const messageObj = {
         id: Date.now().toString(),
-        from: 'CPECC',
+        from: 'SIEPES',
         text: `Aviso de Rejeição/Pendência: ${message}`,
         date: new Date().toISOString(),
         read: false
@@ -730,7 +843,8 @@ export default function AdminDashboard() {
         if (!researcher) throw new Error('Researcher not found');
         
         const updatedMessages = [...(researcher.mensagens || []), messageObj];
-        const updatedRawData = { ...researcher, rejection_message: message, allow_correction: allowCorrection, mensagens: updatedMessages };
+        const { raw_data, ...researcherWithoutRaw } = researcher;
+        const updatedRawData = { ...researcherWithoutRaw, rejection_message: message, allow_correction: allowCorrection, mensagens: updatedMessages };
         
         const docRef = doc(db, 'researchers', id);
         await updateDoc(docRef, { 
@@ -750,7 +864,8 @@ export default function AdminDashboard() {
         const researcher = researchers.find(r => r.id === project.authorUid);
         if (researcher) {
           const updatedMessages = [...(researcher.mensagens || []), messageObj];
-          const updatedResearcherRawData = { ...researcher, mensagens: updatedMessages };
+          const { raw_data, ...researcherWithoutRaw } = researcher;
+          const updatedResearcherRawData = { ...researcherWithoutRaw, mensagens: updatedMessages };
           const researcherDocRef = doc(db, 'researchers', researcher.id);
           await updateDoc(researcherDocRef, updatedResearcherRawData);
           setResearchers(prev => prev.map(r => r.id === researcher.id ? { ...r, ...updatedResearcherRawData } : r));
@@ -766,6 +881,7 @@ export default function AdminDashboard() {
         setAllProjects(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
         setSubmissions(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
         setPublications(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
+        setPicites(prev => prev.map(p => p.id === id ? { ...p, status: newStatus, raw_data: JSON.stringify(updatedRawData) } : p));
         
         if (selectedAccountabilityProject?.id === id) {
           setSelectedAccountabilityProject((prev: any) => ({ ...prev, status: newStatus, raw_data: updatedRawData }));
@@ -783,7 +899,7 @@ export default function AdminDashboard() {
 
   const [signingDoc, setSigningDoc] = useState<string | null>(null);
 
-  const handleDocumentStatusUpdate = async (docObj: any, docName: string, docUrl: string, newStatus: 'Aprovado' | 'Rejeitado', message: string = '') => {
+  const handleDocumentStatusUpdate = async (docObj: any, docName: string, docUrl: string, newStatus: 'Aprovado' | 'Rejeitado', message: string = '', shouldSign: boolean = true) => {
     try {
       setSigningDoc(docName);
       
@@ -794,15 +910,20 @@ export default function AdminDashboard() {
       const isSignable = docName !== 'lattes' && (docUrl.includes('drive.google.com') || docUrl.endsWith('.pdf') || docUrl.endsWith('.png') || docUrl.endsWith('.jpg') || docUrl.endsWith('.jpeg'));
 
       // If approved, sign the PDF
-      if (newStatus === 'Aprovado' && adminUser && isSignable) {
+      if (newStatus === 'Aprovado' && adminUser && isSignable && shouldSign) {
         showToast(`Assinando digitalmente: ${docName}...`, 'success');
         try {
+          const currentAdmin = admins.find(a => a.email === adminUser.email) || { nome: adminUser.nome, cargo: 'Gestor(a) SIEPES' };
+          const signerName = currentAdmin.nome;
+          const signerRole = currentAdmin.cargo;
+
           const res = await fetch('/api/sign-pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               fileUrl: docUrl,
-              signerName: adminUser.username,
+              signerName: signerName,
+              signerRole: signerRole,
               documentName: docName
             })
           });
@@ -855,7 +976,7 @@ export default function AdminDashboard() {
           message, 
           signature: signatureData, 
           date: new Date().toISOString(),
-          signedUrl: finalDocUrl !== docUrl ? finalDocUrl : undefined
+          signedUrl: finalDocUrl !== docUrl ? finalDocUrl : null
         }
       };
 
@@ -902,30 +1023,32 @@ export default function AdminDashboard() {
         // If status is Pendente, change to Em Análise
         let newResearcherStatus = docObj.status === 'Pendente' ? 'Em Análise' : docObj.status;
         
+        const { raw_data: __ignored, ...cleanedRawData } = updatedRawData;
+
         if (newStatus === 'Rejeitado') {
           newResearcherStatus = 'Pendência';
           const messageObj = {
             id: Date.now().toString(),
-            from: 'CPECC',
+            from: 'SIEPES',
             text: `Aviso de Rejeição no documento "${docName}": ${message}`,
             date: new Date().toISOString(),
             read: false
           };
-          updatedRawData.mensagens = [...(docObj.raw_data?.mensagens || []), messageObj];
-          updatedRawData.rejection_message = `Documento "${docName}" rejeitado: ${message}`;
-          updatedRawData.allow_correction = true;
+          cleanedRawData.mensagens = [...(docObj.mensagens || []), messageObj];
+          cleanedRawData.rejection_message = `Documento "${docName}" rejeitado: ${message}`;
+          cleanedRawData.allow_correction = true;
         }
 
         const docRef = doc(db, 'researchers', docObj.id);
         await updateDoc(docRef, { 
-          ...updatedRawData,
+          ...cleanedRawData,
           status: newResearcherStatus
         });
-        setResearchers(prev => prev.map(r => r.id === docObj.id ? { ...r, ...updatedRawData, status: newResearcherStatus } : r));
+        setResearchers(prev => prev.map(r => r.id === docObj.id ? { ...r, ...cleanedRawData, status: newResearcherStatus, raw_data: cleanedRawData } : r));
         
         // Update selectedResearcher if it's the one being edited
         if (selectedResearcher?.id === docObj.id) {
-          setSelectedResearcher((prev: any) => ({ ...prev, ...updatedRawData, status: newResearcherStatus }));
+          setSelectedResearcher((prev: any) => ({ ...prev, ...cleanedRawData, status: newResearcherStatus, raw_data: cleanedRawData }));
         }
       } else {
         // If status is Pendente, change to Em Análise for projects too
@@ -935,7 +1058,7 @@ export default function AdminDashboard() {
           newProjectStatus = 'Pendência';
           const messageObj = {
             id: Date.now().toString(),
-            from: 'CPECC',
+            from: 'SIEPES',
             text: `Aviso de Rejeição no documento "${docName}" do projeto "${updatedRawData?.titulo || updatedRawData?.titulo_projeto}": ${message}`,
             date: new Date().toISOString(),
             read: false
@@ -960,18 +1083,19 @@ export default function AdminDashboard() {
           status: newProjectStatus
         });
         
-        setAllProjects(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
-        setSubmissions(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
-        setPublications(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus } : p));
+        setAllProjects(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setSubmissions(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setPublications(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
+        setPicites(prev => prev.map(p => p.id === docObj.id ? { ...p, raw_data: updatedRawData, status: newProjectStatus } : p));
         
         // Update selectedAccountabilityProject if it's the one being edited
         if (selectedAccountabilityProject?.id === docObj.id) {
-          setSelectedAccountabilityProject((prev: any) => ({ ...prev, raw_data: JSON.stringify(updatedRawData), status: newProjectStatus }));
+          setSelectedAccountabilityProject((prev: any) => ({ ...prev, raw_data: updatedRawData, status: newProjectStatus }));
         }
       }
 
       // Update selected document state
-      setSelectedDocument({ ...docObj, raw_data: JSON.stringify(updatedRawData), status: (docObj.isResearcher || docObj.type) && docObj.status === 'Pendente' ? 'Em Análise' : docObj.status });
+      setSelectedDocument({ ...docObj, raw_data: updatedRawData, status: docObj.status === 'Pendente' ? 'Em Análise' : docObj.status });
       
       showToast(`Status do documento atualizado para ${newStatus}.`, 'success');
     } catch (error) {
@@ -1068,7 +1192,7 @@ export default function AdminDashboard() {
                 {statusInfo?.signature && (
                   <div className="mb-4 p-3 bg-success/5 border border-success/20 rounded-lg text-left w-full max-w-md">
                     <div className="flex items-center gap-2 text-success font-bold text-xs mb-1">
-                      <Shield className="w-4 h-4" /> Assinatura Digital CPECC
+                      <Shield className="w-4 h-4" /> Assinatura Digital SIEPES
                     </div>
                     <div className="text-[10px] text-on-surface-variant space-y-1">
                       <p><span className="font-bold">Assinado por:</span> {statusInfo.signature.signerName}</p>
@@ -1097,8 +1221,18 @@ export default function AdminDashboard() {
                   >
                     <X className="w-3 h-3" /> Rejeitar
                   </button>
+                  {isSignable && (
+                    <button 
+                      onClick={() => handleDocumentStatusUpdate(doc, u.name, u.url, 'Aprovado', '', false)}
+                      disabled={isSigning || isApproved}
+                      className="px-3 py-1.5 bg-success/10 text-success hover:bg-success/20 rounded text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {isSigning ? <Clock className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 
+                      {isSigning ? 'Processando...' : 'Só Aprovar'}
+                    </button>
+                  )}
                   <button 
-                    onClick={() => handleDocumentStatusUpdate(doc, u.name, u.url, 'Aprovado')}
+                    onClick={() => handleDocumentStatusUpdate(doc, u.name, u.url, 'Aprovado', '', true)}
                     disabled={isSigning || isApproved}
                     className="px-3 py-1.5 bg-success/10 text-success hover:bg-success/20 rounded text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-50"
                   >
@@ -1114,6 +1248,143 @@ export default function AdminDashboard() {
     );
   };
 
+  const renderProjectDashboardModal = () => {
+    if (!showProjectDashboardModal || !selectedDashboardProject) return null;
+
+    const project = selectedDashboardProject;
+    const isApprovedOrExecuting = project.status === 'Aprovado' || project.status === 'Em Execução';
+    const researcher = researchers.find(r => r.id === project.authorUid);
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+        <div className="bg-surface rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+            <div>
+              <h2 className="text-xl font-bold text-primary">Dashboard Administrativo do Projeto</h2>
+              <p className="text-sm text-on-surface-variant font-bold">{project.raw_data?.titulo || 'Projeto sem título'}</p>
+            </div>
+            <button onClick={() => { setShowProjectDashboardModal(false); setSelectedDashboardProject(null); }} className="text-on-surface-variant hover:text-primary p-2">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bento-card">
+                <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-4 border-b pb-2">Informações Gerais</h3>
+                <div className="space-y-3">
+                  <div>
+                    <span className="text-xs text-on-surface-variant block">Pesquisador Responsável</span>
+                    <span className="text-sm font-bold">{researcher?.nome || 'Desconhecido'}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-on-surface-variant block">Status Atual</span>
+                    <span className={`inline-block px-2 py-1 mt-1 rounded text-[10px] font-bold uppercase cursor-pointer hover:opacity-80 transition-opacity ${
+                      project.status === 'Aprovado' ? 'bg-success/10 text-success' :
+                      project.status === 'Em Execução' ? 'bg-primary/10 text-primary' :
+                      project.status === 'Em Análise' ? 'bg-yellow-100 text-yellow-800' :
+                      project.status === 'Rascunho' ? 'bg-gray-100 text-gray-800' :
+                      'bg-error/10 text-error'
+                    }`}>
+                      {project.status}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-on-surface-variant block">Data de Criação</span>
+                    <span className="text-sm">{new Date(project.createdAt).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                  {project.type && (
+                    <div>
+                      <span className="text-xs text-on-surface-variant block">Tipo de Fomento</span>
+                      <span className="text-sm capitalize">{project.type.replace('_', ' ')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bento-card">
+                <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-4 border-b pb-2">Prazos e Relatórios</h3>
+                {isApprovedOrExecuting ? (
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg flex items-start gap-3">
+                      <Clock className="w-5 h-5 text-blue-600 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-blue-800 block">Relatório Parcial</span>
+                        <span className="text-xs text-blue-600 block mt-1">
+                          {project.type === 'picite' 
+                            ? 'Obrigatório o envio de acordo com o edital do PICITE para renovação da bolsa (geralmente após 6 meses de vigência).' 
+                            : 'Deve ser enviado em até 6 meses após a assinatura ou liberação do recurso, conforme plano de trabalho.'}
+                        </span>
+                      </div>
+                    </div>
+                    {project.type === 'picite' ? (
+                      <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-lg flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-yellow-600 shrink-0" />
+                        <div>
+                          <span className="text-xs font-bold text-yellow-800 block">Frequência/Mensal</span>
+                          <span className="text-xs text-yellow-600 block mt-1">
+                            Acompanhamento de frequência e relatórios mensais para liberação das bolsas PICITE.
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-purple-50 border border-purple-100 p-3 rounded-lg flex items-start gap-3">
+                        <FileText className="w-5 h-5 text-purple-600 shrink-0" />
+                        <div>
+                          <span className="text-xs font-bold text-purple-800 block">Relatório Final</span>
+                          <span className="text-xs text-purple-600 block mt-1">
+                            Envio da prestação de contas integral e relatório científico no fechamento do projeto.
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-on-surface-variant bg-surface-container-low p-4 rounded-lg text-center">
+                    Os prazos e exigências serão estabelecidos após a aprovação e assinatura do projeto.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bento-card">
+              <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-4 border-b pb-2">Documentos Submetidos</h3>
+              <div className="bg-surface-container-low rounded-lg p-4">
+                {renderDocumentLinks(project)}
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-outline-variant">
+               <button 
+                 onClick={() => {
+                   setSelectedDocument(project);
+                   setShowProjectDashboardModal(false);
+                   setShowPendingModal(true);
+                 }}
+                 className="btn-secondary"
+               >
+                 Análise Detalhada
+               </button>
+               {project.type !== 'picite' && (
+                 <button 
+                   onClick={() => {
+                     setSelectedAccountabilityProject(project);
+                     setShowProjectDashboardModal(false);
+                     setShowAccountabilityModal(true);
+                   }}
+                   className="btn-primary flex items-center gap-2"
+                   disabled={!isApprovedOrExecuting}
+                 >
+                   <DollarSign className="w-4 h-4" /> Ver Auditoria Financeira
+                 </button>
+               )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderPendingModal = () => {
     if (!showPendingModal) return null;
     
@@ -1124,7 +1395,12 @@ export default function AdminDashboard() {
       type: 'researcher'
     }));
     
-    const pendingItems = [...pendingProjects, ...pendingResearchers];
+    let pendingItems = [...pendingProjects, ...pendingResearchers];
+    
+    // Ensure selected document is in the list even if it is no longer pending
+    if (selectedDocument && !pendingItems.find(i => i.id === selectedDocument.id)) {
+      pendingItems = [selectedDocument, ...pendingItems];
+    }
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1250,6 +1526,47 @@ export default function AdminDashboard() {
                   </div>
                   <div className="flex-1 p-4 overflow-y-auto">
                     <div className="space-y-4">
+                      {selectedDocument.type === 'fomento_pesquisa' && selectedDocument.raw_data && (
+                        <div className="bg-surface-container-low p-4 rounded-lg mb-6 shadow-sm border border-outline-variant">
+                          <h4 className="font-bold text-sm text-primary mb-3 uppercase tracking-wider">Conteúdo do Projeto</h4>
+                          
+                          <div className="grid gap-4">
+                            {selectedDocument.raw_data.resumo && (
+                              <div>
+                                <h5 className="font-bold text-xs text-on-surface-variant flex items-center gap-1">
+                                  Resumo
+                                </h5>
+                                <div className="text-sm bg-surface p-3 mt-1 rounded border border-outline-variant/50 text-justify text-on-surface leading-relaxed max-h-40 overflow-y-auto">
+                                  {selectedDocument.raw_data.resumo}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {selectedDocument.raw_data.metodologia && (
+                              <div>
+                                <h5 className="font-bold text-xs text-on-surface-variant flex items-center gap-1">
+                                  Metodologia
+                                </h5>
+                                <div className="text-sm bg-surface p-3 mt-1 rounded border border-outline-variant/50 text-justify text-on-surface leading-relaxed max-h-40 overflow-y-auto">
+                                  {selectedDocument.raw_data.metodologia}
+                                </div>
+                              </div>
+                            )}
+
+                            {selectedDocument.raw_data.objetivos && (
+                              <div>
+                                <h5 className="font-bold text-xs text-on-surface-variant flex items-center gap-1">
+                                  Objetivos
+                                </h5>
+                                <div className="text-sm bg-surface p-3 mt-1 rounded border border-outline-variant/50 text-justify text-on-surface leading-relaxed max-h-40 overflow-y-auto">
+                                  {selectedDocument.raw_data.objetivos}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
                       <h4 className="font-bold text-sm text-on-surface">Arquivos Anexados:</h4>
                       {renderDocumentLinks(selectedDocument)}
                     </div>
@@ -1375,16 +1692,20 @@ export default function AdminDashboard() {
                     Orçamento: R$ {s.raw_data?.orcamento_json ? JSON.parse(s.raw_data.orcamento_json).reduce((acc: number, item: any) => acc + (item.qtd * item.valor), 0).toFixed(2) : '0,00'}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <span className="px-2 py-1 bg-success/10 text-success text-[10px] font-bold rounded uppercase">Em Execução</span>
+                  <button 
+                    onClick={() => triggerDeleteProject(s.id)}
+                    className="p-1 hover:bg-red-500/10 text-red-500 rounded-lg shrink-0" title="Excluir"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         </div>
       </div>
-      
-      {renderPendingModal()}
     </div>
   );
 
@@ -1438,9 +1759,12 @@ export default function AdminDashboard() {
                     <button 
                       onClick={() => {
                         const project = allProjects.find(proj => proj.id === s.id);
-                        if (project) setSelectedDocument(project);
+                        if (project) {
+                          setSelectedDashboardProject(project);
+                          setShowProjectDashboardModal(true);
+                        }
                       }}
-                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Analisar Documentos"
+                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Painel do Projeto"
                     >
                       <Search className="w-4 h-4" />
                     </button>
@@ -1598,6 +1922,215 @@ export default function AdminDashboard() {
                     >
                       <X className="w-4 h-4" />
                     </button>
+                    <button 
+                      onClick={() => triggerDeleteProject(s.id)}
+                      className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg" title="Excluir"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const [selectedChatResearcherId, setSelectedChatResearcherId] = useState<string | null>(null);
+
+  const renderMessages = () => {
+    const researchersWithMessages = researchers.filter(r => r.mensagens && r.mensagens.length > 0)
+      .sort((a, b) => {
+        const lastA = new Date(a.mensagens[a.mensagens.length - 1].date).getTime();
+        const lastB = new Date(b.mensagens[b.mensagens.length - 1].date).getTime();
+        return lastB - lastA;
+      });
+
+    const selectedResearcherChat = researchers.find(r => r.id === selectedChatResearcherId);
+
+    return (
+      <div className="space-y-6 animate-in fade-in h-[calc(100vh-120px)] flex flex-col">
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-primary">Comunicação (Mensagens)</h2>
+        </div>
+        
+        <div className="glass-panel rounded-xl flex-1 flex overflow-hidden">
+          {/* Sidebar de conversas */}
+          <div className="w-1/3 border-r border-outline-variant flex flex-col bg-surface-container-lowest">
+            <div className="p-4 border-b border-outline-variant bg-surface-container-low">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-on-surface-variant" />
+                <input type="text" placeholder="Buscar pesquisador..." className="input-field pl-9 py-2 text-sm w-full" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {researchersWithMessages.length === 0 ? (
+                <div className="p-8 text-center text-on-surface-variant text-sm">
+                  Nenhuma mensagem recebida ainda.
+                </div>
+              ) : (
+                researchersWithMessages.map(r => {
+                  const lastMessage = r.mensagens[r.mensagens.length - 1];
+                  const unreadCount = r.mensagens.filter((m: any) => m.from === 'Pesquisador' && !m.read).length;
+                  return (
+                    <div 
+                      key={r.id} 
+                      onClick={() => setSelectedChatResearcherId(r.id)}
+                      className={`p-4 border-b border-outline-variant cursor-pointer transition-colors ${
+                        selectedChatResearcherId === r.id ? 'bg-primary/5 border-l-4 border-l-primary' : 'hover:bg-surface-container-low'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="font-bold text-sm text-primary truncate pr-2">{r.nome || 'Desconhecido'}</div>
+                        <div className="text-[10px] text-on-surface-variant whitespace-nowrap">
+                          {new Date(lastMessage.date).toLocaleDateString('pt-BR')}
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <div className="text-xs text-on-surface-variant truncate pr-2">
+                          <span className="font-bold">{lastMessage.from === 'SIEPES' ? 'Você: ' : ''}</span>
+                          {lastMessage.text}
+                        </div>
+                        {unreadCount > 0 && (
+                          <div className="bg-primary text-on-primary text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0">
+                            {unreadCount}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Área de Chat */}
+          <div className="flex-1 flex flex-col bg-surface-container-lowest">
+            {selectedResearcherChat ? (
+              <>
+                <div className="p-4 border-b border-outline-variant bg-surface-container-low flex justify-between items-center">
+                  <div>
+                    <h3 className="font-bold text-primary">{selectedResearcherChat.nome || 'Pesquisador'}</h3>
+                    <p className="text-xs text-on-surface-variant">{selectedResearcherChat.email}</p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {selectedResearcherChat.mensagens?.map((msg: any) => (
+                    <div key={msg.id} className={`flex ${msg.from === 'SIEPES' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[70%] p-3 rounded-xl shadow-sm ${
+                        msg.from === 'SIEPES' ? 'bg-primary text-on-primary rounded-tr-none' : 'bg-surface-container rounded-tl-none border border-outline-variant text-on-surface'
+                      }`}>
+                        <div className="text-sm">{msg.text}</div>
+                        <div className={`text-[10px] mt-1 text-right ${msg.from === 'SIEPES' ? 'text-primary-container/80' : 'text-on-surface-variant'}`}>
+                          {new Date(msg.date).toLocaleString('pt-BR')}
+                          {msg.from === 'SIEPES' && <Check className="w-3 h-3 inline ml-1 opacity-70" />}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-4 border-t border-outline-variant bg-surface-container-low">
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={adminNewMessage}
+                      onChange={(e) => setAdminNewMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleSendAdminMessage(selectedResearcherChat.id);
+                        }
+                      }}
+                      placeholder="Digite sua resposta..." 
+                      className="input-field flex-1"
+                    />
+                    <button 
+                      onClick={() => handleSendAdminMessage(selectedResearcherChat.id)}
+                      className="btn-primary py-2 px-6"
+                      disabled={!adminNewMessage.trim()}
+                    >
+                      Enviar
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-on-surface-variant opacity-50">
+                <MessageSquare className="w-16 h-16 mb-4" />
+                <p>Selecione um pesquisador para abrir o painel de mensagens.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPicite = () => (
+    <div className="space-y-6 animate-in fade-in">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-primary">Projetos PICITE</h2>
+        <div className="flex gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-on-surface-variant" />
+            <input type="text" placeholder="Buscar PICITE..." className="input-field pl-9 py-2 text-sm w-64" />
+          </div>
+          <button className="btn-secondary py-2 flex items-center gap-2">
+            <Filter className="w-4 h-4" /> Filtrar
+          </button>
+        </div>
+      </div>
+      <div className="glass-panel overflow-x-auto rounded-xl">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-surface-container-high text-on-surface-variant text-[10px] font-bold uppercase tracking-wider">
+              <th className="p-4 rounded-tl-xl">Projeto</th>
+              <th className="p-4">Pesquisador</th>
+              <th className="p-4">Data</th>
+              <th className="p-4">Status</th>
+              <th className="p-4 text-right rounded-tr-xl">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-outline-variant">
+            {picites.map(p => (
+              <tr key={p.id} className="hover:bg-surface-container-low transition-colors">
+                <td className="p-4">
+                  <div className="text-sm font-bold text-primary">{p.title}</div>
+                  <div className="text-[10px] text-on-surface-variant uppercase">{p.type}</div>
+                </td>
+                <td className="p-4 text-sm text-on-surface-variant">{p.researcherName || '---'}</td>
+                <td className="p-4 text-sm text-on-surface-variant">{new Date(p.createdAt).toLocaleDateString('pt-BR')}</td>
+                <td className="p-4">
+                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                    p.status === 'Aprovado' ? 'bg-success/10 text-success' :
+                    p.status === 'Em Execução' ? 'bg-primary/10 text-primary' :
+                    p.status === 'Pendente' ? 'bg-error/10 text-error' :
+                    'bg-secondary/10 text-secondary'
+                  }`}>
+                    {p.status}
+                  </span>
+                </td>
+                <td className="p-4 text-right">
+                  <div className="flex justify-end gap-2">
+                    <button 
+                      onClick={() => {
+                        const project = allProjects.find(proj => proj.id === p.id);
+                        if (project) {
+                          setSelectedDashboardProject(project);
+                          setShowProjectDashboardModal(true);
+                        }
+                      }}
+                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Painel do Projeto"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => triggerDeleteProject(p.id)}
+                      className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg" title="Excluir"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1656,9 +2189,12 @@ export default function AdminDashboard() {
                     <button 
                       onClick={() => {
                         const project = allProjects.find(proj => proj.id === p.id);
-                        if (project) setSelectedDocument(project);
+                        if (project) {
+                          setSelectedDashboardProject(project);
+                          setShowProjectDashboardModal(true);
+                        }
                       }}
-                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Analisar Documentos"
+                      className="p-2 hover:bg-secondary/10 text-secondary rounded-lg" title="Painel do Projeto"
                     >
                       <Search className="w-4 h-4" />
                     </button>
@@ -1789,6 +2325,12 @@ export default function AdminDashboard() {
                       className="p-2 hover:bg-error/10 text-error rounded-lg" title="Rejeitar / Solicitar Ajustes"
                     >
                       <X className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => triggerDeleteProject(p.id)}
+                      className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg" title="Excluir"
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </td>
@@ -1935,7 +2477,7 @@ export default function AdminDashboard() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-bold text-primary flex items-center gap-2">
-          <Users className="w-6 h-6" /> Gestão da Equipe CPECC
+          <Users className="w-6 h-6" /> Gestão da Equipe SIEPES
         </h3>
         <button 
           onClick={() => setShowAddAdmin(true)}
@@ -1979,23 +2521,18 @@ export default function AdminDashboard() {
               />
             </div>
             <div>
-              <label className="label-text">Usuário (Login)</label>
+              <label className="label-text">E-mail (Login Google)</label>
               <input 
-                type="text" 
+                type="email" 
                 className="input-field" 
-                value={newAdmin.username}
-                onChange={e => setNewAdmin({...newAdmin, username: e.target.value})}
+                value={newAdmin.email}
+                onChange={e => setNewAdmin({...newAdmin, email: e.target.value})}
                 required 
               />
             </div>
-            <div>
-              <label className="label-text">Senha</label>
+            <div className="hidden">
               <input 
-                type="password" 
-                className="input-field" 
-                value={newAdmin.password}
-                onChange={e => setNewAdmin({...newAdmin, password: e.target.value})}
-                required 
+                type="hidden" 
               />
             </div>
             <div>
@@ -2027,7 +2564,7 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {admins.map(admin => (
           <div key={admin.id} className="glass-panel p-6 rounded-xl relative">
-            {admin.username !== 'admin' && (
+            {admin.role !== 'admin' && (
               <button 
                 onClick={() => removeAdmin(admin.id)}
                 className="absolute top-4 right-4 text-on-surface-variant hover:text-error transition-colors"
@@ -2041,14 +2578,14 @@ export default function AdminDashboard() {
                 <Shield className="w-6 h-6" />
               </div>
               <div>
-                <div className="font-bold text-primary text-lg">{admin.nome || admin.username}</div>
+                <div className="font-bold text-primary text-lg">{admin.nome || admin.email}</div>
                 <div className="text-xs text-on-surface-variant uppercase tracking-widest">{admin.role}</div>
               </div>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between border-b border-outline-variant/30 pb-1">
-                <span className="text-on-surface-variant">Login:</span>
-                <span className="font-medium">{admin.username}</span>
+                <span className="text-on-surface-variant">E-mail:</span>
+                <span className="font-medium truncate ml-2" title={admin.email}>{admin.email}</span>
               </div>
               <div className="flex justify-between border-b border-outline-variant/30 pb-1">
                 <span className="text-on-surface-variant">Cargo:</span>
@@ -2251,6 +2788,36 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-surface flex">
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 p-6">
+            <h2 className="text-xl font-bold text-on-surface mb-2 flex items-center gap-2">
+              <AlertCircle className="w-6 h-6 text-error" /> Configurar Exclusão
+            </h2>
+            <p className="text-on-surface-variant mb-6">
+              Tem certeza que deseja deletar este projeto? Esta ação não pode ser desfeita. Todos os dados serão perdidos permanente.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setProjectToDeleteId(null);
+                }}
+                className="btn-secondary"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={confirmDeleteProject}
+                className="px-6 py-2 bg-error text-white font-bold rounded-xl hover:bg-error/90 transition-colors"
+              >
+                Deletar Permanente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toastMessage && (
         <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg text-white font-bold animate-in slide-in-from-top-4 ${toastMessage.type === 'success' ? 'bg-success' : 'bg-error'}`}>
           {toastMessage.message}
@@ -2261,7 +2828,7 @@ export default function AdminDashboard() {
         <div className="p-6 border-b border-outline-variant">
           <div className="flex items-center gap-2 text-primary mb-1">
             <Shield className="w-6 h-6" />
-            <span className="font-bold text-lg tracking-tight">CPECC ADM</span>
+            <span className="font-bold text-lg tracking-tight">SIEPES ADM</span>
           </div>
           <div className="text-[10px] text-on-surface-variant font-bold uppercase tracking-[0.2em]">
             Portal do Gestor
@@ -2292,6 +2859,22 @@ export default function AdminDashboard() {
             }`}
           >
             <BookOpen className="w-4 h-4" /> Publicações
+          </button>
+          <button 
+            onClick={() => setActiveTab('picite')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+              activeTab === 'picite' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'
+            }`}
+          >
+            <FileText className="w-4 h-4" /> PICITE
+          </button>
+          <button 
+            onClick={() => setActiveTab('messages')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+              activeTab === 'messages' ? 'bg-primary text-on-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-high'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" /> Mensagens
           </button>
           <button 
             onClick={() => setActiveTab('accountability')}
@@ -2329,7 +2912,13 @@ export default function AdminDashboard() {
             onClick={handleExportData}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-primary hover:bg-primary/10 transition-all border border-primary/20 mb-2"
           >
-            <Download className="w-4 h-4" /> Exportar Base
+            <Download className="w-4 h-4" /> Exportar Excel
+          </button>
+          <button 
+            onClick={handleExportCSV}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-secondary hover:bg-secondary/10 transition-all border border-secondary/20 mb-2"
+          >
+            <Download className="w-4 h-4" /> Exportar CSV
           </button>
           <button 
             onClick={logout}
@@ -2348,12 +2937,14 @@ export default function AdminDashboard() {
               {activeTab === 'overview' && 'Painel de Controle'}
               {activeTab === 'submissions' && 'Gestão de Fomentos'}
               {activeTab === 'publications' && 'Solicitações de Publicação'}
+              {activeTab === 'picite' && 'Projetos PICITE'}
+              {activeTab === 'messages' && 'Comunicação'}
               {activeTab === 'accountability' && 'Auditoria Financeira'}
               {activeTab === 'team' && 'Gestão de Equipe'}
               {activeTab === 'researchers' && 'Pesquisadores'}
             </h2>
             <p className="text-sm text-on-surface-variant">
-              Bem-vindo ao portal administrativo da CPECC/ESPDF.
+              Bem-vindo ao portal administrativo do SIEPES.
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -2373,6 +2964,8 @@ export default function AdminDashboard() {
             {activeTab === 'overview' && renderOverview()}
             {activeTab === 'submissions' && renderSubmissions()}
             {activeTab === 'publications' && renderPublications()}
+            {activeTab === 'picite' && renderPicite()}
+            {activeTab === 'messages' && renderMessages()}
             {activeTab === 'accountability' && renderAccountability()}
             {activeTab === 'team' && renderTeam()}
             {activeTab === 'researchers' && renderResearchers()}
@@ -2438,22 +3031,22 @@ export default function AdminDashboard() {
                                     <div class="value"><span class="label">CPF</span><span class="value-text">${researcher.cpf || 'N/A'}</span></div>
                                     <div class="value"><span class="label">RG</span><span class="value-text">${researcher.raw_data?.rg || 'N/A'}</span></div>
                                     <div class="value"><span class="label">E-mail Institucional</span><span class="value-text">${researcher.email_inst || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">E-mail Pessoal</span><span class="value-text">${researcher.raw_data?.email_pessoal || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">E-mail Pessoal</span><span class="value-text">${researcher.raw_data?.email_pess || 'N/A'}</span></div>
                                     <div class="value"><span class="label">Telefone</span><span class="value-text">${researcher.raw_data?.telefone || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">Data de Nascimento</span><span class="value-text">${researcher.raw_data?.data_nascimento || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Data de Nascimento</span><span class="value-text">${researcher.raw_data?.nascimento || 'N/A'}</span></div>
                                   </div>
                                 </div>
 
                                 <div class="section">
                                   <h2>2. Dados Institucionais e Acadêmicos</h2>
                                   <div class="grid-3">
-                                    <div class="value"><span class="label">Titulação</span><span class="value-text">${researcher.titulacao || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">Vínculo</span><span class="value-text">${researcher.raw_data?.vinculo_tipo || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Titulação</span><span class="value-text">${researcher.raw_data?.titulacao || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Vínculo</span><span class="value-text">${researcher.raw_data?.vinculo || 'N/A'}</span></div>
                                     <div class="value"><span class="label">Lotação</span><span class="value-text">${researcher.raw_data?.lotacao || 'N/A'}</span></div>
                                     <div class="value"><span class="label">Regional</span><span class="value-text">${researcher.raw_data?.regional || 'N/A'}</span></div>
                                     <div class="value"><span class="label">Matrícula</span><span class="value-text">${researcher.raw_data?.matricula || 'N/A'}</span></div>
                                     <div class="value"><span class="label">Carga Horária</span><span class="value-text">${researcher.raw_data?.carga_horaria || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">Área (CNPq)</span><span class="value-text">${researcher.raw_data?.area_conhecimento || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">Área (CNPq)</span><span class="value-text">${researcher.raw_data?.area || 'N/A'}</span></div>
                                     <div class="value"><span class="label">ORCID</span><span class="value-text">${researcher.raw_data?.orcid || 'N/A'}</span></div>
                                   </div>
                                 </div>
@@ -2462,10 +3055,10 @@ export default function AdminDashboard() {
                                   <h2>3. Características Sociodemográficas</h2>
                                   <div class="grid-3">
                                     <div class="value"><span class="label">Gênero</span><span class="value-text">${researcher.raw_data?.genero || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">Raça/Cor</span><span class="value-text">${researcher.raw_data?.raca_cor || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">PNE</span><span class="value-text">${researcher.raw_data?.pne || 'Não'}</span></div>
+                                    <div class="value"><span class="label">Raça/Cor</span><span class="value-text">${researcher.raw_data?.raca || 'N/A'}</span></div>
+                                    <div class="value"><span class="label">PCD</span><span class="value-text">${researcher.raw_data?.pcd || 'Não'}</span></div>
                                     <div class="value"><span class="label">Ensino Médio</span><span class="value-text">${researcher.raw_data?.ensino_medio || 'N/A'}</span></div>
-                                    <div class="value"><span class="label">Beneficiário Social</span><span class="value-text">${researcher.raw_data?.beneficiario_social || 'Não'}</span></div>
+                                    <div class="value"><span class="label">Beneficiário Social</span><span class="value-text">${researcher.raw_data?.beneficiario || 'Não'}</span></div>
                                   </div>
                                 </div>
 
@@ -2476,7 +3069,7 @@ export default function AdminDashboard() {
                                 </div>
 
                                 <div class="footer">
-                                  Documento gerado automaticamente pelo Portal CPECC/ESPDF em ${new Date().toLocaleString('pt-BR')}.
+                                  Documento gerado automaticamente pelo Portal SIEPES em ${new Date().toLocaleString('pt-BR')}.
                                 </div>
                               </body>
                             </html>
@@ -2606,11 +3199,11 @@ export default function AdminDashboard() {
                     <section className="bento-card flex flex-col h-full">
                       <h3 className="text-lg font-bold text-on-surface mb-4 border-b border-gray-100 pb-2">Mensagens</h3>
                       <div className="space-y-4 flex-1 overflow-y-auto pr-2 mb-4 min-h-[200px] max-h-[400px]">
-                        {selectedResearcher.raw_data?.mensagens?.length > 0 ? (
-                          selectedResearcher.raw_data.mensagens.map((msg: any) => (
-                            <div key={msg.id} className={`p-3 rounded-lg text-sm ${msg.from === 'CPECC' ? 'bg-primary/10 ml-4 border border-primary/20' : 'bg-surface-container mr-4 border border-outline-variant'}`}>
+                        {selectedResearcher.mensagens?.length > 0 ? (
+                          selectedResearcher.mensagens.map((msg: any) => (
+                            <div key={msg.id} className={`p-3 rounded-lg text-sm ${msg.from === 'SIEPES' ? 'bg-primary/10 ml-4 border border-primary/20' : 'bg-surface-container mr-4 border border-outline-variant'}`}>
                               <div className="flex justify-between items-start mb-1">
-                                <span className="font-bold text-xs">{msg.from === 'CPECC' ? 'Gestor (Você)' : 'Pesquisador'}</span>
+                                <span className="font-bold text-xs">{msg.from === 'SIEPES' ? 'Gestor (Você)' : 'Pesquisador'}</span>
                                 <span className="text-[10px] text-on-surface-variant">{new Date(msg.date).toLocaleString('pt-BR')}</span>
                               </div>
                               <p className="text-on-surface whitespace-pre-wrap">{msg.text}</p>
@@ -2752,6 +3345,8 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {renderProjectDashboardModal()}
+        {renderPendingModal()}
         {renderAccountabilityModal()}
       </main>
     </div>

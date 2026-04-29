@@ -4,7 +4,7 @@ import crypto from 'crypto';
 
 export async function POST(request: Request) {
   try {
-    const { fileUrl, signerName, documentName } = await request.json();
+    const { fileUrl, signerName, signerRole, documentName } = await request.json();
 
     if (!fileUrl) {
       return NextResponse.json({ error: 'File URL is required' }, { status: 400 });
@@ -128,17 +128,28 @@ export async function POST(request: Request) {
     const signatureId = crypto.randomUUID();
     const hash = crypto.createHash('sha256').update(Buffer.from(arrayBuffer)).digest('hex').substring(0, 16);
     
-    const signatureText = `Documento assinado eletronicamente por ${signerName}, Gestor(a) CPECC/ESPDF, em ${timestamp}.\nID: ${signatureId} | Hash: ${hash}`;
+    const role = signerRole || 'Gestor(a) SIEPES';
+    const textOptions = { size: 8, font, color: rgb(0, 0, 0.5) };
+
+    const line1 = `Documento assinado digitalmente por ${signerName}, ${role}, em ${timestamp}.`;
+    const line2 = `Verificador SIEPES: ${signatureId} | Hash: ${hash}`;
 
     // Add signature to the bottom of every page
     for (const page of pages) {
-      const { width, height } = page.getSize();
-      page.drawText(signatureText, {
-        x: 50,
-        y: 30,
-        size: 8,
-        font: font,
-        color: rgb(0, 0, 0.5),
+      const { width } = page.getSize();
+      
+      const width1 = font.widthOfTextAtSize(line1, textOptions.size);
+      const width2 = font.widthOfTextAtSize(line2, textOptions.size);
+
+      page.drawText(line1, {
+        ...textOptions,
+        x: (width - width1) / 2,
+        y: 26,
+      });
+      page.drawText(line2, {
+        ...textOptions,
+        x: (width - width2) / 2,
+        y: 16,
       });
     }
 
